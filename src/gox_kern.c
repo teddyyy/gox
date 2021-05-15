@@ -77,8 +77,7 @@ static inline int parse_gtpu(void *data, u64 offset, void *data_end)
 	if (gh + 1 > data_end)
 		return -1;
 
-	if (gh->type != GTPU_G_PDU)
-	{
+	if (gh->type != GTPU_G_PDU) {
 		bpf_printk("parse_gtpu: type 0x%x is not GPDU(0x%x)\n", gh->type, GTPU_G_PDU);
 		return -1;
 	}
@@ -86,6 +85,17 @@ static inline int parse_gtpu(void *data, u64 offset, void *data_end)
 	bpf_printk("parse_gtpu: input teid %d\n", bpf_ntohl(gh->teid));
 
 	return bpf_ntohl(gh->teid);
+}
+
+static inline void parse_inner_ipv4(struct xdp_md *ctx, struct iphdr *inner_iph)
+{
+	void *data_end = (void *)(long)ctx->data_end;
+	struct iphdr *iph = (void *)(long)ctx->data + sizeof(struct ethhdr) + IPV4_UDP_GTPU_SIZE;
+
+	if (iph + 1 > data_end) return;
+
+	inner_iph->daddr = iph->daddr;
+	inner_iph->saddr = iph->saddr;
 }
 
 static int decap_gtpu(struct xdp_md *ctx)
@@ -160,7 +170,23 @@ static int encap_gtpu(struct xdp_md *ctx, int payload_size,
 	return 0;
 }
 
-static int prepare_redirect_ipv4(struct xdp_md *ctx, struct bpf_fib_lookup *fib_params)
+static int confirm_redirect_ipv4(struct xdp_md *ctx, struct bpf_fib_lookup *fib_params, u32 src, u32 dst)
+{
+	fib_params->family = AF_INET;
+	fib_params->ipv4_src = src;
+	fib_params->ipv4_dst = dst;
+
+	int rc = bpf_fib_lookup(ctx, fib_params, sizeof(*fib_params), 0);
+
+	if (rc != BPF_FIB_LKUP_RET_SUCCESS) {
+		bpf_printk("confirm_redirect_ipv4: not found neighbor rc %d\n", rc);
+		return -1;
+	}
+
+	return 0;
+}
+
+static int redirect_ipv4(struct xdp_md *ctx, struct bpf_fib_lookup *fib_params)
 {
 	void *data = (void *)(long)ctx->data;
 	void *data_end = (void *)(long)ctx->data_end;
@@ -169,35 +195,13 @@ static int prepare_redirect_ipv4(struct xdp_md *ctx, struct bpf_fib_lookup *fib_
 	if (data + sizeof(*eh) > data_end)
 		return -1;
 
-	struct iphdr *iph = data + sizeof(*eh);
-	if (iph + 1 > data_end)
-		return -1;
-
-	fib_params->family = AF_INET;
-	fib_params->tos = iph->tos;
-	fib_params->l4_protocol = iph->protocol;
-	fib_params->sport = 0;
-	fib_params->dport = 0;
-	fib_params->tot_len = bpf_ntohs(iph->tot_len);
-	fib_params->ipv4_src = iph->saddr;
-	fib_params->ipv4_dst = iph->daddr;
-
-	bpf_printk("prepare_redirect_ipv4: tot_len %d ip src 0x%x dst 0x%x\n",
-				fib_params->tot_len, fib_params->ipv4_src, fib_params->ipv4_dst);
-
-	int rc = bpf_fib_lookup(ctx, fib_params, sizeof(*fib_params), 0);
-	if (rc != BPF_FIB_LKUP_RET_SUCCESS) {
-		bpf_printk("redirect_ipv4_packet: not found neighbor rc %d\n", rc);
-		return -1;
-	}
-
 	__builtin_memcpy(eh->h_dest, fib_params->dmac, ETH_ALEN);
 	__builtin_memcpy(eh->h_source, fib_params->smac, ETH_ALEN);
 
-	bpf_printk("prepare_redirect_ipv4: ingress ifindex %d egress ifindex %d\n",
+	bpf_printk("redirect_ipv4: ingress ifindex %d egress ifindex %d\n",
 				ctx->ingress_ifindex, fib_params->ifindex);
 
-	return 0;
+	return bpf_redirect(fib_params->ifindex, 0);
 }
 
 SEC("input_gtpu_prog")
@@ -206,6 +210,7 @@ int xdp_input_gtpu(struct xdp_md *ctx)
 	void *data_end = (void *)(long)ctx->data_end;
 	void *data = (void *)(long)ctx->data;
 	struct ethhdr *eth = data;
+	struct iphdr inner_iph = {};
 	struct pdr_t *pdr;
 	struct pdi_t pdi = {};
 	struct far_t *far;
@@ -248,9 +253,20 @@ int xdp_input_gtpu(struct xdp_md *ctx)
 		goto drop;
 	}
 
-	offset += sizeof(struct gtpuhdr);
+	u32 src, dst;
+	if (far->forward) {
+		src = pdi.gtpu_addr_ipv4.s_addr;
+		dst = far->peer_addr_ipv4.s_addr;
+	} else {
+		parse_inner_ipv4(ctx, &inner_iph);
+		src = inner_iph.saddr;
+		dst = inner_iph.daddr;
+	}
 
-	bpf_printk("xdp_input_gtpu: decap_gtpu offset %d\n", offset);
+	struct bpf_fib_lookup fib_params = { .ifindex = ctx->ingress_ifindex };
+	if (confirm_redirect_ipv4(ctx, &fib_params, src, dst) < 0)
+		return XDP_PASS;
+
 	if (decap_gtpu(ctx) < 0)
 		goto drop;
 
@@ -259,12 +275,7 @@ int xdp_input_gtpu(struct xdp_md *ctx)
 			goto drop;
 	}
 
-	bpf_printk("xdp_input_raw: prepare_redirect_ipv4\n");
-	struct bpf_fib_lookup fib_params = { .ifindex = ctx->ingress_ifindex };
-	if (prepare_redirect_ipv4(ctx, &fib_params) < 0)
-		goto drop;
-
-	return bpf_redirect(fib_params.ifindex, 0);
+	return redirect_ipv4(ctx, &fib_params);
 
 drop:
 	return XDP_DROP;
@@ -314,15 +325,14 @@ int xdp_input_raw(struct xdp_md *ctx)
 	if (!far->forward)
 		goto drop;
 
+	struct bpf_fib_lookup fib_params = { .ifindex = ctx->ingress_ifindex };
+	if (confirm_redirect_ipv4(ctx, &fib_params, pdi.gtpu_addr_ipv4.s_addr, far->peer_addr_ipv4.s_addr) < 0)
+		return XDP_PASS;
+
 	if (encap_gtpu(ctx, data_end - (data + offset), &pdi, far) < 0)
 		goto drop;
 
-	bpf_printk("xdp_input_raw: redirect_ipv4_packet\n");
-	struct bpf_fib_lookup fib_params = { .ifindex = ctx->ingress_ifindex };
-	if (prepare_redirect_ipv4(ctx, &fib_params) < 0)
-		goto drop;
-
-	return bpf_redirect(fib_params.ifindex, 0);
+	return redirect_ipv4(ctx, &fib_params);
 
 drop:
 	return XDP_DROP;
