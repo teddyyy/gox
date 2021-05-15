@@ -23,14 +23,14 @@ struct bpf_map_def SEC("maps") far_entries = {
 
 struct bpf_map_def SEC("maps") gtpu_pdr_entries = {
 	.type = BPF_MAP_TYPE_PERCPU_HASH,
-	.key_size = sizeof(u32), // input teid
+	.key_size = sizeof(u32),
 	.value_size = sizeof(struct pdr_t),
 	.max_entries = 16,
 };
 
 struct bpf_map_def SEC("maps") raw_pdr_entries = {
 	.type = BPF_MAP_TYPE_PERCPU_HASH,
-	.key_size = sizeof(struct in_addr), // ue addr
+	.key_size = sizeof(struct in_addr),
 	.value_size = sizeof(struct pdr_t),
 	.max_entries = 16,
 };
@@ -160,7 +160,7 @@ static int encap_gtpu(struct xdp_md *ctx, int payload_size,
 	return 0;
 }
 
-static int prepare_redirect_ipv4(struct xdp_md *ctx)
+static int prepare_redirect_ipv4(struct xdp_md *ctx, struct bpf_fib_lookup *fib_params)
 {
 	void *data = (void *)(long)ctx->data;
 	void *data_end = (void *)(long)ctx->data_end;
@@ -173,33 +173,31 @@ static int prepare_redirect_ipv4(struct xdp_md *ctx)
 	if (iph + 1 > data_end)
 		return -1;
 
-	struct bpf_fib_lookup fib_params = {};
-	fib_params.family = AF_INET;
-	fib_params.tos = iph->tos;
-	fib_params.l4_protocol = iph->protocol;
-	fib_params.sport = 0;
-	fib_params.dport = 0;
-	fib_params.tot_len = bpf_ntohs(iph->tot_len);
-	fib_params.ipv4_src = iph->saddr;
-	fib_params.ipv4_dst = iph->daddr;
-	fib_params.ifindex = ctx->ingress_ifindex;
+	fib_params->family = AF_INET;
+	fib_params->tos = iph->tos;
+	fib_params->l4_protocol = iph->protocol;
+	fib_params->sport = 0;
+	fib_params->dport = 0;
+	fib_params->tot_len = bpf_ntohs(iph->tot_len);
+	fib_params->ipv4_src = iph->saddr;
+	fib_params->ipv4_dst = iph->daddr;
 
 	bpf_printk("prepare_redirect_ipv4: tot_len %d ip src 0x%x dst 0x%x\n",
-				fib_params.tot_len, fib_params.ipv4_src, fib_params.ipv4_dst);
+				fib_params->tot_len, fib_params->ipv4_src, fib_params->ipv4_dst);
 
-	int rc = bpf_fib_lookup(ctx, &fib_params, sizeof(fib_params), 0);
+	int rc = bpf_fib_lookup(ctx, fib_params, sizeof(*fib_params), 0);
 	if (rc != BPF_FIB_LKUP_RET_SUCCESS) {
 		bpf_printk("redirect_ipv4_packet: not found neighbor rc %d\n", rc);
 		return -1;
 	}
 
-	__builtin_memcpy(eh->h_dest, fib_params.dmac, ETH_ALEN);
-	__builtin_memcpy(eh->h_source, fib_params.smac, ETH_ALEN);
+	__builtin_memcpy(eh->h_dest, fib_params->dmac, ETH_ALEN);
+	__builtin_memcpy(eh->h_source, fib_params->smac, ETH_ALEN);
 
 	bpf_printk("prepare_redirect_ipv4: ingress ifindex %d egress ifindex %d\n",
-				ctx->ingress_ifindex, fib_params.ifindex);
+				ctx->ingress_ifindex, fib_params->ifindex);
 
-	return fib_params.ifindex;
+	return 0;
 }
 
 SEC("input_gtpu_prog")
@@ -215,7 +213,7 @@ int xdp_input_gtpu(struct xdp_md *ctx)
 
 	offset = sizeof(*eth);
 	if (data + offset > data_end)
-		goto pass;
+		goto drop;
 
 	if (ETH_P_IP != bpf_htons(eth->h_proto))
 		return XDP_PASS;
@@ -228,50 +226,47 @@ int xdp_input_gtpu(struct xdp_md *ctx)
 
 	int len = parse_udp(data, offset, data_end);
 	if (len < sizeof(struct gtpuhdr))
-		goto pass;
+		goto drop;
 	if (len > data_end - data - offset)
-		goto pass;
+		goto drop;
 
 	offset += sizeof(struct udphdr);
 	u32 teid = parse_gtpu(data, offset, data_end);
-	if (!teid)
-		goto pass;
-
 	pdr = bpf_map_lookup_elem(&gtpu_pdr_entries, &teid);
 	if (!pdr) {
 		bpf_printk("xdp_input_gtpu: pdr not found pdr key(%d)\n", teid);
-		goto pass;
+		goto drop;
 	}
 
 	pdi = pdr->pdi;
 	if (pdi.teid != teid)
-		goto pass;
+		goto drop;
 
 	far = bpf_map_lookup_elem(&far_entries, &pdr->far_id);
 	if (!far) {
 		bpf_printk("xdp_input_gtpu: far not found far key(%d)\n", pdr->far_id);
-		goto pass;
+		goto drop;
 	}
 
 	offset += sizeof(struct gtpuhdr);
 
 	bpf_printk("xdp_input_gtpu: decap_gtpu offset %d\n", offset);
 	if (decap_gtpu(ctx) < 0)
-		goto pass;
+		goto drop;
 
 	if (far->forward) {
 		if (encap_gtpu(ctx, data_end - (data + sizeof(*eth)), &pdi, far) < 0)
-			goto pass;
+			goto drop;
 	}
 
-	bpf_printk("xdp_input_raw: redirect_ipv4_packet\n");
-	int fwd_ifindex = prepare_redirect_ipv4(ctx);
-	if (fwd_ifindex < 0)
-		goto pass;
+	bpf_printk("xdp_input_raw: prepare_redirect_ipv4\n");
+	struct bpf_fib_lookup fib_params = { .ifindex = ctx->ingress_ifindex };
+	if (prepare_redirect_ipv4(ctx, &fib_params) < 0)
+		goto drop;
 
-	return bpf_redirect(fwd_ifindex, 0);
+	return bpf_redirect(fib_params.ifindex, 0);
 
-pass:
+drop:
 	return XDP_DROP;
 }
 
@@ -289,47 +284,47 @@ int xdp_input_raw(struct xdp_md *ctx)
 
 	offset = sizeof(*eth);
 	if (data + offset > data_end)
-		goto pass;
+		goto drop;
 
 	if (ETH_P_IP != bpf_htons(eth->h_proto))
 		return XDP_PASS;
 
 	iph = data + offset;
 	if (iph + 1 > data_end)
-		goto pass;
+		goto drop;
 
 	bpf_printk("xdp_input_raw: ip src 0x%x dst 0x%x\n", iph->saddr, iph->daddr);
 
 	pdr = bpf_map_lookup_elem(&raw_pdr_entries, &iph->daddr);
 	if (!pdr) {
 		bpf_printk("xdp_input_raw: not found pdr key(0x%x)\n", iph->daddr);
-		goto pass;
+		goto drop;
 	}
 
 	pdi = pdr->pdi;
 	if (pdi.ue_addr_ipv4.s_addr != iph->daddr)
-		goto pass;
+		goto drop;
 
 	far = bpf_map_lookup_elem(&far_entries, &pdr->far_id);
 	if (!far) {
 		bpf_printk("xdp_input_raw: not found far key(%d)\n", pdr->far_id);
-		goto pass;
+		goto drop;
 	}
 
 	if (!far->forward)
-		goto pass;
+		goto drop;
 
 	if (encap_gtpu(ctx, data_end - (data + offset), &pdi, far) < 0)
-		goto pass;
+		goto drop;
 
 	bpf_printk("xdp_input_raw: redirect_ipv4_packet\n");
-	int fwd_ifindex = prepare_redirect_ipv4(ctx);
-	if (fwd_ifindex < 0)
-		goto pass;
+	struct bpf_fib_lookup fib_params = { .ifindex = ctx->ingress_ifindex };
+	if (prepare_redirect_ipv4(ctx, &fib_params) < 0)
+		goto drop;
 
-	return bpf_redirect(fwd_ifindex, 0);
+	return bpf_redirect(fib_params.ifindex, 0);
 
-pass:
+drop:
 	return XDP_DROP;
 }
 

@@ -24,10 +24,10 @@ typedef __s8  s8;
 #define GTP_UDP_PORT 2152
 
 struct gtpuhdr {
-	u8 flags;
-	u8 type;
-	u16 length;
-	u32 teid;
+    u8 flags;
+    u8 type;
+    u16 length;
+    u32 teid;
 }__attribute__((packed));
 
 struct pdi_t {
@@ -38,7 +38,7 @@ struct pdi_t {
 
 struct pdr_t {
     u16 id;
-	struct pdi_t pdi;
+    struct pdi_t pdi;
     u32 far_id;
 };
 
