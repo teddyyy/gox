@@ -50,3 +50,9 @@ modules.order
 Module.symvers
 Mkfile.old
 dkms.conf
+
+# vagrant
+.vagrant
+
+# gox
+gox_user
