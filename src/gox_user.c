@@ -4,6 +4,7 @@
 #include <unistd.h>
 #include <net/if.h>
 #include <string.h>
+#include <unistd.h>
 
 #include "common.h"
 
@@ -14,6 +15,11 @@ int gtpu_map_fd, raw_map_fd, far_map_fd;
 enum {
 	RAW = 0,
 	GTPU
+};
+
+enum {
+	UPF = 0,
+	RAN
 };
 
 static void sigint_handler(int signum)
@@ -108,60 +114,96 @@ int update_forwarding_rule_element(u16 pdr_id, u32 far_id, u32 self_teid,
 	return 0;
 }
 
+void usage(void) {
+	printf("Usage:\n");
+	printf("-u|-a: use UPF Mode (-u, default) or RAN Mode (-a)\n");
+	printf("-r <raw iface name>: Name of interface to use (mandatory)\n");
+	printf("-g <gtpu iface name>: Name of interface to use (mandatory)\n");
+}
+
 
 int main(int argc, char **argv)
 {
 	int prog_fd, gtpu_ifindex, raw_ifindex;
+	int option;
+	int mode = UPF;
+	char raw_ifname[IFNAMSIZ] = "";
+	char gtpu_ifname[IFNAMSIZ] = "";
 	struct bpf_object *obj;
 	struct bpf_prog_load_attr prog_load_attr = {
 		.prog_type	= BPF_PROG_TYPE_XDP,
 		.file		= "src/gox_kern.o",
 	};
 
+	while((option = getopt(argc, argv, "r:g:hua")) > 0) {
+		switch(option) {
+			case 'h':
+				usage();
+				return -1;
+				break;
+			case 'u':
+				mode = UPF;
+				break;
+			case 'a':
+				mode = RAN;
+				break;
+			case 'r':
+				strncpy(raw_ifname, optarg, IFNAMSIZ - 1);
+				break;
+			case 'g':
+				strncpy(gtpu_ifname, optarg, IFNAMSIZ - 1);
+				break;
+			default:
+				printf("Unknown option %c\n", option);
+				printf("\n");
+				usage();
+				return -1;
+		}
+	}
+
+	argv += optind;
+	argc -= optind;
+
+	if (argc > 0) {
+		printf("Too many options!\n");
+		printf("\n");
+		usage();
+		return -1;
+	}
+
+	if(*raw_ifname == '\0' || *gtpu_ifname == '\0') {
+		printf("Must specify raw interface name and gtpu interface name\n");
+		printf("\n");
+		usage();
+		return -1;
+	}
+
 	if (bpf_prog_load_xattr(&prog_load_attr, &obj, &prog_fd)) {
 		printf("can't load file %s\n", prog_load_attr.file);
 		return -1;
 	}
 
-	if ((gtpu_map_fd = find_map_fd(obj, "gtpu_pdr_entries")) < 0) return -1;
-	if ((raw_map_fd = find_map_fd(obj, "raw_pdr_entries")) < 0) return -1;
-	if ((far_map_fd = find_map_fd(obj, "far_entries")) < 0) return -1;
+	if ((gtpu_map_fd = find_map_fd(obj, "gtpu_pdr_entries")) < 0)
+		return -1;
+	if ((raw_map_fd = find_map_fd(obj, "raw_pdr_entries")) < 0)
+		return -1;
+	if ((far_map_fd = find_map_fd(obj, "far_entries")) < 0)
+		return -1;
 
-	if (strcmp(argv[1], "upf") == 0) {
-		if ((gtpu_ifindex = set_program_by_title(obj, prog_fd, "input_gtpu_prog", "upf-veth1")) < 0) return -1;
-		if ((raw_ifindex = set_program_by_title(obj, prog_fd, "input_raw_prog", "upf-veth2")) < 0) return -1;
+	if ((gtpu_ifindex = set_program_by_title(obj, prog_fd, "input_gtpu_prog", gtpu_ifname)) < 0)
+		return -1;
+	if ((raw_ifindex = set_program_by_title(obj, prog_fd, "input_raw_prog", raw_ifname)) < 0)
+		return -1;
 
+	if (mode == UPF) {
 		//upf pdr_id, far_id, self_teid, ue_addr, gtpu_addr, encapsulation, peer_teid, peer_addr, direction(raw/gtpu)
 		update_forwarding_rule_element(1, 21, 202, 0x100000A, 0x200A8C0, false, 0, 0, 1);
 		update_forwarding_rule_element(2, 22, 202, 0x100000A, 0x200A8C0, true, 101, 0x100A8C0, 0);
-	} else if (strcmp(argv[1], "ran") == 0) {
+	} else {
 		// ran
-		gtpu_ifindex = set_program_by_title(obj, prog_fd, "input_gtpu_prog", "ran-veth2");
-		raw_ifindex = set_program_by_title(obj, prog_fd, "input_raw_prog", "ran-veth1");
-
 		update_forwarding_rule_element(1, 21, 101, 0x10010AC, 0x100A8C0, false, 0, 0, 1);
 		update_forwarding_rule_element(2, 22, 101, 0x10010AC, 0x100A8C0, true, 202, 0x200A8C0, 0);
 	}
-
-	struct pdr_t confirm = { 0 };
-	u32 key = 202;
-	bpf_map_lookup_elem(gtpu_map_fd, &key, &confirm);
-	//u32 key = 0x100000A;
-	//bpf_map_lookup_elem(raw_map_fd, &key, &confirm);
-	printf("pdr.id %d\n", confirm.id);
-	printf("pdr.far_id %d\n", confirm.far_id);
-
-	struct pdi_t confirm_pdi = confirm.pdi;
-	printf("pdi.teid %d\n", confirm_pdi.teid);
-	printf("pdi.ue_addr_ipv4 %x\n", confirm_pdi.ue_addr_ipv4.s_addr);
-	printf("pdi.gtpu_addr_ipv4 %x\n", confirm_pdi.gtpu_addr_ipv4.s_addr);
-
-	struct far_t confirm_far = { 0 };
-	bpf_map_lookup_elem(far_map_fd, &confirm.far_id, &confirm_far);
-	printf("far.id %d\n", confirm_far.id);
-	printf("far.encapsulation %d\n", confirm_far.encapsulation);
-	printf("far.teid %d\n", confirm_far.teid);
-	printf("far.peer_addr_ipv4 %x\n", confirm_far.peer_addr_ipv4.s_addr);
 
 	signal(SIGINT, sigint_handler);
 	signal(SIGPIPE, sigint_handler);
