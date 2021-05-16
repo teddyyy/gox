@@ -62,7 +62,7 @@ int set_program_by_title(struct bpf_object *bpf_obj, int prog_fd,
 
 static
 int update_forwarding_rule_element(u16 pdr_id, u32 far_id, u32 self_teid,
-                                   u32 ue_addr, u32 gtpu_addr, bool forward,
+                                   u32 ue_addr, u32 gtpu_addr, bool encapsulation,
 								   u32 peer_teid, u32 peer_addr, int direction)
 {
 	struct pdi_t pdi = {
@@ -79,11 +79,11 @@ int update_forwarding_rule_element(u16 pdr_id, u32 far_id, u32 self_teid,
 
 	struct far_t far = {
 		.id = far_id,
-		.forward = false
+		.encapsulation = false
 	};
 
-	if (forward) {
-		far.forward = true;
+	if (encapsulation) {
+		far.encapsulation = true;
 		far.teid = peer_teid;
 		far.peer_addr_ipv4.s_addr = peer_addr;
 	}
@@ -131,7 +131,7 @@ int main(int argc, char **argv)
 		if ((gtpu_ifindex = set_program_by_title(obj, prog_fd, "input_gtpu_prog", "upf-veth1")) < 0) return -1;
 		if ((raw_ifindex = set_program_by_title(obj, prog_fd, "input_raw_prog", "upf-veth2")) < 0) return -1;
 
-		//upf pdr_id, far_id, self_teid, ue_addr, gtpu_addr, forward, peer_teid, peer_addr, direction(raw/gtpu)
+		//upf pdr_id, far_id, self_teid, ue_addr, gtpu_addr, encapsulation, peer_teid, peer_addr, direction(raw/gtpu)
 		update_forwarding_rule_element(1, 21, 202, 0x100000A, 0x200A8C0, false, 0, 0, 1);
 		update_forwarding_rule_element(2, 22, 202, 0x100000A, 0x200A8C0, true, 101, 0x100A8C0, 0);
 	} else if (strcmp(argv[1], "ran") == 0) {
@@ -159,7 +159,7 @@ int main(int argc, char **argv)
 	struct far_t confirm_far = { 0 };
 	bpf_map_lookup_elem(far_map_fd, &confirm.far_id, &confirm_far);
 	printf("far.id %d\n", confirm_far.id);
-	printf("far.forward %d\n", confirm_far.forward);
+	printf("far.encapsulation %d\n", confirm_far.encapsulation);
 	printf("far.teid %d\n", confirm_far.teid);
 	printf("far.peer_addr_ipv4 %x\n", confirm_far.peer_addr_ipv4.s_addr);
 

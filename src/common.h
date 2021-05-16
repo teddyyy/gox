@@ -44,7 +44,7 @@ struct pdr_t {
 
 struct far_t {
     u32 id;
-    bool forward;
+    bool encapsulation;
     u32 teid; // output_teid for header creation
     struct in_addr peer_addr_ipv4; // ran ip or a-upf ip for header creation
 };

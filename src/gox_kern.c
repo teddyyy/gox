@@ -254,7 +254,7 @@ int xdp_input_gtpu(struct xdp_md *ctx)
 	}
 
 	u32 src, dst;
-	if (far->forward) {
+	if (far->encapsulation) {
 		src = pdi.gtpu_addr_ipv4.s_addr;
 		dst = far->peer_addr_ipv4.s_addr;
 	} else {
@@ -270,7 +270,7 @@ int xdp_input_gtpu(struct xdp_md *ctx)
 	if (decap_gtpu(ctx) < 0)
 		goto drop;
 
-	if (far->forward) {
+	if (far->encapsulation) {
 		if (encap_gtpu(ctx, data_end - (data + sizeof(*eth)), &pdi, far) < 0)
 			goto drop;
 	}
@@ -322,7 +322,7 @@ int xdp_input_raw(struct xdp_md *ctx)
 		goto drop;
 	}
 
-	if (!far->forward)
+	if (!far->encapsulation)
 		goto drop;
 
 	struct bpf_fib_lookup fib_params = { .ifindex = ctx->ingress_ifindex };
