@@ -87,7 +87,7 @@ int update_gtpu_addr(char *addr)
 static
 int update_forwarding_rule_element(u16 pdr_id, u32 far_id, u32 self_teid,
                                    u32 ue_addr, u32 gtpu_addr, bool encapsulation,
-								   u32 peer_teid, u32 peer_addr, int direction)
+                                   u32 peer_teid, u32 peer_addr, int direction)
 {
 	struct pdi_t pdi = {
 		.teid = self_teid,
