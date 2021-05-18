@@ -5,12 +5,13 @@
 #include <net/if.h>
 #include <string.h>
 #include <unistd.h>
+#include <arpa/inet.h>
 
 #include "common.h"
 
 static bool interrupted;
 
-int gtpu_map_fd, raw_map_fd, far_map_fd;
+int gtpu_map_fd, raw_map_fd, far_map_fd, src_map_fd;
 
 enum {
 	RAW = 0,
@@ -22,7 +23,8 @@ enum {
 	RAN
 };
 
-static void sigint_handler(int signum)
+static
+void sigint_handler(int signum)
 {
 	printf("interrupted\n");
 	interrupted = true;
@@ -64,6 +66,22 @@ int set_program_by_title(struct bpf_object *bpf_obj, int prog_fd,
 	}
 
 	return ifindex;
+}
+
+static
+int update_gtpu_addr(char *addr)
+{
+	struct in_addr gtpu_addr;
+	int key = 0;
+
+	inet_pton(AF_INET, addr, &gtpu_addr);
+
+	if (bpf_map_update_elem(src_map_fd, &key, &gtpu_addr, BPF_ANY)) {
+		printf("can't add gtpu addr map entry\n");
+		return -1;
+	}
+
+	return 0;
 }
 
 static
@@ -119,6 +137,7 @@ void usage(void) {
 	printf("-u|-a: use UPF Mode (-u, default) or RAN Mode (-a)\n");
 	printf("-r <raw iface name>: Name of interface to use (mandatory)\n");
 	printf("-g <gtpu iface name>: Name of interface to use (mandatory)\n");
+	printf("-s <gtpu source address>: Address of GTPU to use (mandatory)\n");
 }
 
 
@@ -129,13 +148,14 @@ int main(int argc, char **argv)
 	int mode = UPF;
 	char raw_ifname[IFNAMSIZ] = "";
 	char gtpu_ifname[IFNAMSIZ] = "";
+	char gtpu_addr[16] = "";
 	struct bpf_object *obj;
 	struct bpf_prog_load_attr prog_load_attr = {
 		.prog_type	= BPF_PROG_TYPE_XDP,
 		.file		= "src/gox_kern.o",
 	};
 
-	while((option = getopt(argc, argv, "r:g:hua")) > 0) {
+	while((option = getopt(argc, argv, "r:g:s:hua")) > 0) {
 		switch(option) {
 			case 'h':
 				usage();
@@ -146,6 +166,9 @@ int main(int argc, char **argv)
 				break;
 			case 'a':
 				mode = RAN;
+				break;
+			case 's':
+				strncpy(gtpu_addr, optarg, 16);
 				break;
 			case 'r':
 				strncpy(raw_ifname, optarg, IFNAMSIZ - 1);
@@ -178,6 +201,13 @@ int main(int argc, char **argv)
 		return -1;
 	}
 
+	if (*gtpu_addr == '\0') {
+		printf("Must specify gtpu source address\n");
+		printf("\n");
+		usage();
+		return -1;
+	}
+
 	if (bpf_prog_load_xattr(&prog_load_attr, &obj, &prog_fd)) {
 		printf("can't load file %s\n", prog_load_attr.file);
 		return -1;
@@ -189,10 +219,15 @@ int main(int argc, char **argv)
 		return -1;
 	if ((far_map_fd = find_map_fd(obj, "far_entries")) < 0)
 		return -1;
+	if ((src_map_fd = find_map_fd(obj, "src_gtpu_addr")) < 0)
+		return -1;
 
 	if ((gtpu_ifindex = set_program_by_title(obj, prog_fd, "input_gtpu_prog", gtpu_ifname)) < 0)
 		return -1;
 	if ((raw_ifindex = set_program_by_title(obj, prog_fd, "input_raw_prog", raw_ifname)) < 0)
+		return -1;
+
+	if (update_gtpu_addr(gtpu_addr) < 0)
 		return -1;
 
 	if (mode == UPF) {

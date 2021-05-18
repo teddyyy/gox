@@ -14,6 +14,13 @@
 
 #define IPV4_UDP_GTPU_SIZE 36
 
+struct bpf_map_def SEC("maps") src_gtpu_addr = {
+	.type = BPF_MAP_TYPE_PERCPU_HASH,
+	.key_size = sizeof(u32),
+	.value_size = sizeof(struct in_addr),
+	.max_entries = 1,
+};
+
 struct bpf_map_def SEC("maps") far_entries = {
 	.type = BPF_MAP_TYPE_PERCPU_HASH,
 	.key_size = sizeof(u32),
@@ -42,7 +49,8 @@ struct bpf_map_def SEC("maps") raw_pdr_entries = {
 						 ##__VA_ARGS__);           \
 	})
 
-static inline int parse_ipv4(void *data, u64 *nh_off, void *data_end)
+static inline
+int parse_ipv4(void *data, u64 *nh_off, void *data_end)
 {
 	struct iphdr *iph = data + *nh_off;
 
@@ -54,7 +62,8 @@ static inline int parse_ipv4(void *data, u64 *nh_off, void *data_end)
 	return iph->protocol;
 }
 
-static inline int parse_udp(void *data, u64 th_off, void *data_end)
+static inline
+int parse_udp(void *data, u64 th_off, void *data_end)
 {
 	struct udphdr *uh = data + th_off;
 
@@ -70,7 +79,8 @@ static inline int parse_udp(void *data, u64 th_off, void *data_end)
 	return bpf_ntohs(uh->len);
 }
 
-static inline int parse_gtpu(void *data, u64 offset, void *data_end)
+static inline
+int parse_gtpu(void *data, u64 offset, void *data_end)
 {
 	struct gtpuhdr *gh = data + offset;
 
@@ -87,7 +97,8 @@ static inline int parse_gtpu(void *data, u64 offset, void *data_end)
 	return bpf_ntohl(gh->teid);
 }
 
-static inline void parse_inner_ipv4(struct xdp_md *ctx, struct iphdr *inner_iph)
+static inline
+void parse_inner_ipv4(struct xdp_md *ctx, struct iphdr *inner_iph)
 {
 	void *data_end = (void *)(long)ctx->data_end;
 	struct iphdr *iph = (void *)(long)ctx->data + sizeof(struct ethhdr) + IPV4_UDP_GTPU_SIZE;
@@ -98,7 +109,8 @@ static inline void parse_inner_ipv4(struct xdp_md *ctx, struct iphdr *inner_iph)
 	inner_iph->saddr = iph->saddr;
 }
 
-static int decap_gtpu(struct xdp_md *ctx)
+static
+int decap_gtpu(struct xdp_md *ctx)
 {
 	void *data = (void *)(long)ctx->data;
 	void *data_end = (void *)(long)ctx->data_end;
@@ -114,8 +126,9 @@ static int decap_gtpu(struct xdp_md *ctx)
 	return bpf_xdp_adjust_head(ctx, decap_size);
 }
 
-static int encap_gtpu(struct xdp_md *ctx, int payload_size,
-					  struct pdi_t *pdi, struct far_t *far)
+static
+int encap_gtpu(struct xdp_md *ctx, int payload_size,
+               struct far_t *far, struct in_addr *gtpu_addr)
 {
 	int encap_size = IPV4_UDP_GTPU_SIZE;
 	if (bpf_xdp_adjust_head(ctx, 0 - encap_size) != 0)
@@ -145,7 +158,7 @@ static int encap_gtpu(struct xdp_md *ctx, int payload_size,
 	iph->tos = 0;
 	iph->tot_len = bpf_htons(payload_size + encap_size);
 	iph->daddr = far->peer_addr_ipv4.s_addr;
-	iph->saddr = pdi->gtpu_addr_ipv4.s_addr;
+	iph->saddr = gtpu_addr->s_addr;
 	iph->ttl = 64;
 	iph->check = 0;
 
@@ -170,7 +183,10 @@ static int encap_gtpu(struct xdp_md *ctx, int payload_size,
 	return 0;
 }
 
-static int confirm_redirect_ipv4(struct xdp_md *ctx, struct bpf_fib_lookup *fib_params, u32 src, u32 dst)
+static
+int confirm_redirect_ipv4(struct xdp_md *ctx,
+                          struct bpf_fib_lookup *fib_params,
+                          u32 src, u32 dst)
 {
 	fib_params->family = AF_INET;
 	fib_params->ipv4_src = src;
@@ -186,7 +202,8 @@ static int confirm_redirect_ipv4(struct xdp_md *ctx, struct bpf_fib_lookup *fib_
 	return 0;
 }
 
-static int redirect_ipv4(struct xdp_md *ctx, struct bpf_fib_lookup *fib_params)
+static
+int redirect_ipv4(struct xdp_md *ctx, struct bpf_fib_lookup *fib_params)
 {
 	void *data = (void *)(long)ctx->data;
 	void *data_end = (void *)(long)ctx->data_end;
@@ -214,6 +231,7 @@ int xdp_input_gtpu(struct xdp_md *ctx)
 	struct pdr_t *pdr;
 	struct pdi_t pdi = {};
 	struct far_t *far;
+	struct in_addr *gtpu_addr;
 	u64 offset;
 
 	offset = sizeof(*eth);
@@ -255,7 +273,10 @@ int xdp_input_gtpu(struct xdp_md *ctx)
 
 	u32 src, dst;
 	if (far->encapsulation) {
-		src = pdi.gtpu_addr_ipv4.s_addr;
+		int key = 0;
+		gtpu_addr = bpf_map_lookup_elem(&src_gtpu_addr, &key);
+		if (!gtpu_addr) goto drop;
+		src = gtpu_addr->s_addr;
 		dst = far->peer_addr_ipv4.s_addr;
 	} else {
 		parse_inner_ipv4(ctx, &inner_iph);
@@ -271,7 +292,7 @@ int xdp_input_gtpu(struct xdp_md *ctx)
 		goto drop;
 
 	if (far->encapsulation) {
-		if (encap_gtpu(ctx, data_end - (data + sizeof(*eth)), &pdi, far) < 0)
+		if (encap_gtpu(ctx, data_end - (data + sizeof(*eth)), far, gtpu_addr) < 0)
 			goto drop;
 	}
 
@@ -291,6 +312,7 @@ int xdp_input_raw(struct xdp_md *ctx)
 	struct pdi_t pdi;
 	struct pdr_t *pdr;
 	struct far_t *far;
+	struct in_addr *gtpu_addr;
 	u64 offset;
 
 	offset = sizeof(*eth);
@@ -325,11 +347,16 @@ int xdp_input_raw(struct xdp_md *ctx)
 	if (!far->encapsulation)
 		goto drop;
 
+	int key = 0;
+	gtpu_addr = bpf_map_lookup_elem(&src_gtpu_addr, &key);
+	if (!gtpu_addr) goto drop;
+
 	struct bpf_fib_lookup fib_params = { .ifindex = ctx->ingress_ifindex };
-	if (confirm_redirect_ipv4(ctx, &fib_params, pdi.gtpu_addr_ipv4.s_addr, far->peer_addr_ipv4.s_addr) < 0)
+	if (confirm_redirect_ipv4(ctx, &fib_params, gtpu_addr->s_addr,
+                              far->peer_addr_ipv4.s_addr) < 0)
 		return XDP_PASS;
 
-	if (encap_gtpu(ctx, data_end - (data + offset), &pdi, far) < 0)
+	if (encap_gtpu(ctx, data_end - (data + offset), far, gtpu_addr) < 0)
 		goto drop;
 
 	return redirect_ipv4(ctx, &fib_params);
