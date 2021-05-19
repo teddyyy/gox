@@ -42,12 +42,13 @@ struct bpf_map_def SEC("maps") raw_pdr_entries = {
 	.max_entries = 16,
 };
 
-#define bpf_printk(fmt, ...)                       \
-	({                                             \
-		char ____fmt[] = fmt;                      \
-		bpf_trace_printk(____fmt, sizeof(____fmt), \
-						 ##__VA_ARGS__);           \
-	})
+#define bpf_printk(fmt, ...)			\
+({                                             \
+    char ____fmt[] = fmt;                      \
+    bpf_trace_printk(____fmt, sizeof(____fmt), \
+		    ##__VA_ARGS__);             \
+})
+
 
 static inline
 int parse_ipv4(void *data, u64 *nh_off, void *data_end)
@@ -88,7 +89,8 @@ int parse_gtpu(void *data, u64 offset, void *data_end)
 		return -1;
 
 	if (gh->type != GTPU_G_PDU) {
-		bpf_printk("parse_gtpu: type 0x%x is not GPDU(0x%x)\n", gh->type, GTPU_G_PDU);
+		bpf_printk("parse_gtpu: type 0x%x is not GPDU(0x%x)\n",
+                            gh->type, GTPU_G_PDU);
 		return -1;
 	}
 
@@ -101,7 +103,8 @@ static inline
 void parse_inner_ipv4(struct xdp_md *ctx, struct iphdr *inner_iph)
 {
 	void *data_end = (void *)(long)ctx->data_end;
-	struct iphdr *iph = (void *)(long)ctx->data + sizeof(struct ethhdr) + IPV4_UDP_GTPU_SIZE;
+	struct iphdr *iph = (void *)(long)ctx->data + \
+                            sizeof(struct ethhdr) + IPV4_UDP_GTPU_SIZE;
 
 	if (iph + 1 > data_end) return;
 
@@ -148,8 +151,7 @@ int encap_gtpu(struct xdp_md *ctx, int payload_size,
 	__builtin_memcpy(new_eth, old_eth, sizeof(struct ethhdr));
 
 	struct iphdr *iph = data + sizeof(*new_eth);
-	if (iph + 1 > data_end)
-		return -1;
+	if (iph + 1 > data_end) return -1;
 
 	iph->version = 4;
 	iph->ihl = sizeof(*iph) >> 2;
@@ -163,8 +165,7 @@ int encap_gtpu(struct xdp_md *ctx, int payload_size,
 	iph->check = 0;
 
 	struct udphdr *uh = (void *)iph + sizeof(struct iphdr);
-	if (uh + 1 > data_end)
-		return -1;
+	if (uh + 1 > data_end) return -1;
 
 	uh->source = bpf_htons(GTP_UDP_PORT);
 	uh->dest = bpf_htons(GTP_UDP_PORT);
@@ -172,8 +173,7 @@ int encap_gtpu(struct xdp_md *ctx, int payload_size,
 	uh->check = 0;
 
 	struct gtpuhdr *gh = (void *)uh + sizeof(struct udphdr);
-	if (gh + 1 > data_end)
-		return -1;
+	if (gh + 1 > data_end) return -1;
 
 	gh->flags = 0x30; // GTP-non-prime
 	gh->type = GTPU_G_PDU;
@@ -292,7 +292,8 @@ int xdp_input_gtpu(struct xdp_md *ctx)
 		goto drop;
 
 	if (far->encapsulation) {
-		if (encap_gtpu(ctx, data_end - (data + sizeof(*eth)), far, gtpu_addr) < 0)
+		if (encap_gtpu(ctx, data_end - (data + sizeof(*eth)),
+						far, gtpu_addr) < 0)
 			goto drop;
 	}
 
@@ -323,10 +324,10 @@ int xdp_input_raw(struct xdp_md *ctx)
 		return XDP_PASS;
 
 	iph = data + offset;
-	if (iph + 1 > data_end)
-		goto drop;
+	if (iph + 1 > data_end) goto drop;
 
-	bpf_printk("xdp_input_raw: ip src 0x%x dst 0x%x\n", iph->saddr, iph->daddr);
+	bpf_printk("xdp_input_raw: ip src 0x%x dst 0x%x\n",
+				iph->saddr, iph->daddr);
 
 	pdr = bpf_map_lookup_elem(&raw_pdr_entries, &iph->daddr);
 	if (!pdr) {
@@ -344,8 +345,7 @@ int xdp_input_raw(struct xdp_md *ctx)
 		goto drop;
 	}
 
-	if (!far->encapsulation)
-		goto drop;
+	if (!far->encapsulation) goto drop;
 
 	int key = 0;
 	gtpu_addr = bpf_map_lookup_elem(&src_gtpu_addr, &key);

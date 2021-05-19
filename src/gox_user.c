@@ -86,12 +86,11 @@ int update_gtpu_addr(char *addr)
 
 static
 int update_forwarding_rule_element(u16 pdr_id, u32 far_id, u32 self_teid,
-                                   u32 ue_addr, u32 gtpu_addr, bool encapsulation,
+                                   u32 ue_addr, bool encapsulation,
                                    u32 peer_teid, u32 peer_addr, int direction)
 {
 	struct pdi_t pdi = {
 		.teid = self_teid,
-		.gtpu_addr_ipv4.s_addr = gtpu_addr,
 		.ue_addr_ipv4.s_addr = ue_addr
 	};
 
@@ -231,13 +230,13 @@ int main(int argc, char **argv)
 		return -1;
 
 	if (mode == UPF) {
-		//upf pdr_id, far_id, self_teid, ue_addr, gtpu_addr, encapsulation, peer_teid, peer_addr, direction(raw/gtpu)
-		update_forwarding_rule_element(1, 21, 202, 0x100000A, 0x200A8C0, false, 0, 0, 1);
-		update_forwarding_rule_element(2, 22, 202, 0x100000A, 0x200A8C0, true, 101, 0x100A8C0, 0);
+		//upf pdr_id, far_id, self_teid, ue_addr, encapsulation, peer_teid, peer_addr, direction(raw/gtpu)
+		update_forwarding_rule_element(1, 21, 202, 0x100000A, false, 0, 0, 1);
+		update_forwarding_rule_element(2, 22, 202, 0x100000A, true, 101, 0x100A8C0, 0);
 	} else {
 		// ran
-		update_forwarding_rule_element(1, 21, 101, 0x10010AC, 0x100A8C0, false, 0, 0, 1);
-		update_forwarding_rule_element(2, 22, 101, 0x10010AC, 0x100A8C0, true, 202, 0x200A8C0, 0);
+		update_forwarding_rule_element(1, 21, 101, 0x10010AC, false, 0, 0, 1);
+		update_forwarding_rule_element(2, 22, 101, 0x10010AC, true, 202, 0x200A8C0, 0);
 	}
 
 	signal(SIGINT, sigint_handler);

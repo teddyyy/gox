@@ -33,7 +33,6 @@ struct gtpuhdr {
 struct pdi_t {
     struct in_addr ue_addr_ipv4; // raw key or dn address
     u32 teid; // input_teid & gtpu key
-    struct in_addr gtpu_addr_ipv4; // self upf ip
 };
 
 struct pdr_t {
