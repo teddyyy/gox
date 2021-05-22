@@ -13,7 +13,7 @@ libbpf_objects += libbpf/src/staticobjs/libbpf.o \
 libbpf_objects += libbpf/src/staticobjs/hashmap.o \
 		  libbpf/src/staticobjs/bpf_prog_linfo.o
 
-CFLAGS += -Werror -Wno-pointer-sign -Wno-compare-distinct-pointer-types -I/build/root/usr/include/
+CFLAGS += -Wall -Werror -Wno-pointer-sign -Wno-compare-distinct-pointer-types -I/build/root/usr/include/
 LDFLAGS += -lelf
 
 all: gox_user gox_kern goxctl

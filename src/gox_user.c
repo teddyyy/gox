@@ -143,10 +143,10 @@ int resolve_direction_by_ifname(struct gox_t *gt, char *ifname)
 static
 void exec_pdr_add_command(struct gox_t *gt, char *cmd, int sock)
 {
-	int direction, map_fd;
+	int direction;
 	char ifname[256], key[256], far_id[256];
-	struct pdi_t pdi;
-	struct pdr_t pdr;
+	struct pdi_t pdi = {};
+	struct pdr_t pdr = {};
 
 	printf("pdr add: %s\n", cmd);
 
@@ -171,14 +171,16 @@ void exec_pdr_add_command(struct gox_t *gt, char *cmd, int sock)
 		}
 		pdr.pdi.ue_addr_ipv4 = inaddr;
 
-		if (bpf_map_update_elem(gt->raw_map_fd, &pdr.pdi.ue_addr_ipv4, &pdr, BPF_NOEXIST)) {
+		if (bpf_map_update_elem(gt->raw_map_fd, &pdr.pdi.ue_addr_ipv4,
+                                        &pdr, BPF_NOEXIST)) {
 			write(sock, "can't add raw map entry", 24);
 			return;
 		}
 
 	} else {
 		pdr.pdi.teid = atoi(key);
-		if (bpf_map_update_elem(gt->gtpu_map_fd, &pdr.pdi.teid, &pdr, BPF_NOEXIST)) {
+		if (bpf_map_update_elem(gt->gtpu_map_fd, &pdr.pdi.teid,
+                                        &pdr, BPF_NOEXIST)) {
 			write(sock, "can't add gtpu map entry", 25);
 			return;
 		}
@@ -191,7 +193,7 @@ void exec_pdr_add_command(struct gox_t *gt, char *cmd, int sock)
 static
 void exec_pdr_del_command(struct gox_t *gt, char *cmd, int sock)
 {
-	int direction, map_fd;
+	int direction;
 	char ifname[256], key[256];
 
 	printf("pdr del: %s\n", cmd);
@@ -341,7 +343,7 @@ void process_gox_control(struct gox_t *gt)
 
 void usage(void) {
 	printf("Usage:\n");
-	printf("-r <raw iface name>: Name of interface to receive raw packet  (mandatory)\n");
+	printf("-r <raw iface name>: Name of interface to receive raw packet (mandatory)\n");
 	printf("-g <gtpu iface name>: Name of interface to receive GTPU packet (mandatory)\n");
 	printf("-s <gtpu source address>: Address when sending GTPU packet (mandatory)\n");
 }
@@ -350,8 +352,7 @@ void usage(void) {
 int main(int argc, char **argv)
 {
 	struct gox_t gt;
-	int prog_fd, gtpu_ifindex, raw_ifindex, src_map_fd;
-	int option;
+	int prog_fd, src_map_fd, option;
 	char raw_ifname[IFNAMSIZ] = "";
 	char gtpu_ifname[IFNAMSIZ] = "";
 	char gtpu_addr[16] = "";
