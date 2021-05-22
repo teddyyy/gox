@@ -11,7 +11,7 @@ void usage(void) {
     printf("Usage: goxctl [object] [command] [params]\n");
     printf("\tobject: [ pdr | far ] \n");
     printf("\tcommand: [ add | del ] \n");
-    printf("\tparams pdr add: <ifname> <pdr id> <self teid| ue addr> <far id>\n");
+    printf("\tparams pdr add: <ifname> <self teid| ue addr> <far id>\n");
     printf("\tparams pdr del: <ifname> <self teid| ue addr>\n");
     printf("\tparams far add: <far id> <teid> <peer addr>\n");
     printf("\tparams far del: <far id>\n");

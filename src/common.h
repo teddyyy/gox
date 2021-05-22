@@ -38,7 +38,6 @@ struct pdi_t {
 };
 
 struct pdr_t {
-    u16 id;
     struct pdi_t pdi;
     u32 far_id;
 };

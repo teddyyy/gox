@@ -144,13 +144,13 @@ static
 void exec_pdr_add_command(struct gox_t *gt, char *cmd, int sock)
 {
 	int direction, map_fd;
-	char ifname[256], id[256], key[256], far_id[256];
+	char ifname[256], key[256], far_id[256];
 	struct pdi_t pdi;
 	struct pdr_t pdr;
 
 	printf("pdr add: %s\n", cmd);
 
-	if (sscanf(cmd, "%s %s %s %s", ifname, id, key, far_id) < 4) {
+	if (sscanf(cmd, "%s %s %s", ifname, key, far_id) < 3) {
 		write(sock, "invalid pdr add command", 24);
 		return;
 	}
@@ -160,7 +160,6 @@ void exec_pdr_add_command(struct gox_t *gt, char *cmd, int sock)
 		return;
 	}
 
-	pdr.id = atoi(id);
 	pdr.far_id = atoi(far_id);
 	pdr.pdi = pdi;
 
