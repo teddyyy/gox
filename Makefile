@@ -16,7 +16,7 @@ libbpf_objects += libbpf/src/staticobjs/hashmap.o \
 CFLAGS += -Werror -Wno-pointer-sign -Wno-compare-distinct-pointer-types -I/build/root/usr/include/
 LDFLAGS += -lelf
 
-all: gox_user gox_kern 
+all: gox_user gox_kern goxctl
 
 gox_user: libbpf $(objects)
 	clang $(LDFLAGS) -o gox_user $(libbpf_objects) $(objects)
@@ -29,13 +29,17 @@ gox_kern: src/gox_kern.o
 	-Wno-sign-compare -O2 -emit-llvm -c src/gox_kern.c -o src/gox_kern.ll
 	llc -march=bpf -filetype=obj src/gox_kern.ll -o src/gox_kern.o
 
+goxctl: src/goxctl.c
+	clang src/goxctl.c -o goxctl
+
 libbpf:
 	$(MAKE) -C libbpf/src
 
 clean:
 	$(MAKE) -C libbpf/src clean
 	rm -f src/*.o src/*.ll
-	rm -f gox_user 
+	rm -f gox_user
+	rm -f goxctl
 
 .PHONY: libbpf all
 .DEFAULT: all

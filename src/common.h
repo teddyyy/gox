@@ -20,8 +20,10 @@ typedef __s16 s16;
 typedef __u8  u8;
 typedef __s8  s8;
 
-#define GTPU_G_PDU 255
-#define GTP_UDP_PORT 2152
+#define GTPU_G_PDU       255
+#define GTP_UDP_PORT     2152
+
+#define GOX_UNIX_DOMAIN  "/var/run/gox"
 
 struct gtpuhdr {
     u8 flags;

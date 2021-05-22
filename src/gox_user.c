@@ -1,30 +1,34 @@
 #include <bpf/bpf.h>
 #include <bpf/libbpf.h>
+#include <stdlib.h>
 #include <signal.h>
 #include <unistd.h>
 #include <net/if.h>
 #include <string.h>
 #include <unistd.h>
 #include <arpa/inet.h>
+#include <sys/ioctl.h>
+#include <sys/socket.h>
+#include <linux/un.h>
 
 #include "common.h"
 
 static bool interrupted;
 
-int gtpu_map_fd, raw_map_fd, far_map_fd, src_map_fd;
+struct gox_t {
+	int gtpu_map_fd;
+	int raw_map_fd;
+	int far_map_fd;
+	int raw_ifindex;
+	int gtpu_ifindex;
+};
 
 enum {
 	RAW = 0,
 	GTPU
 };
 
-enum {
-	UPF = 0,
-	RAN
-};
-
-static
-void sigint_handler(int signum)
+static void sigint_handler(int signum)
 {
 	printf("interrupted\n");
 	interrupted = true;
@@ -51,8 +55,8 @@ out:
 }
 
 static 
-int set_program_by_title(struct bpf_object *bpf_obj, int prog_fd,
-                         const char *title, const char *ifname)
+int set_xdp_program(struct bpf_object *bpf_obj, int prog_fd,
+                    const char *title, const char *ifname)
 {
 	struct bpf_program *prog;
 	int ifindex = if_nametoindex(ifname);
@@ -69,14 +73,17 @@ int set_program_by_title(struct bpf_object *bpf_obj, int prog_fd,
 }
 
 static
-int update_gtpu_addr(char *addr)
+int update_gtpu_addr_map(int fd, char *addr)
 {
 	struct in_addr gtpu_addr;
 	int key = 0;
 
-	inet_pton(AF_INET, addr, &gtpu_addr);
+	if (inet_pton(AF_INET, addr, &gtpu_addr) < 1) {
+		printf("invalid gtpu addr\n");
+		return -1;
+	}
 
-	if (bpf_map_update_elem(src_map_fd, &key, &gtpu_addr, BPF_ANY)) {
+	if (bpf_map_update_elem(fd, &key, &gtpu_addr, BPF_NOEXIST)) {
 		printf("can't add gtpu addr map entry\n");
 		return -1;
 	}
@@ -85,66 +92,260 @@ int update_gtpu_addr(char *addr)
 }
 
 static
-int update_forwarding_rule_element(u16 pdr_id, u32 far_id, u32 self_teid,
-                                   u32 ue_addr, bool encapsulation,
-                                   u32 peer_teid, u32 peer_addr, int direction)
+int create_unix_domain_socket(char *domain)
 {
-	struct pdi_t pdi = {
-		.teid = self_teid,
-		.ue_addr_ipv4.s_addr = ue_addr
+	int sock;
+	struct sockaddr_un saddru = {
+		.sun_family = AF_UNIX,
 	};
 
-	struct pdr_t pdr = {
-		.id = pdr_id,
-		.far_id = far_id,
-		.pdi = pdi
-	};
+	strncpy(saddru.sun_path, domain, UNIX_PATH_MAX);
 
-	struct far_t far = {
-		.id = far_id,
-		.encapsulation = false
-	};
+	if ((sock = socket(AF_UNIX, SOCK_STREAM, 0)) < 0) {
+		perror("socket");
+		return -1;
+	}
 
-	if (encapsulation) {
-		far.encapsulation = true;
-		far.teid = peer_teid;
-		far.peer_addr_ipv4.s_addr = peer_addr;
+	if (bind(sock, (struct sockaddr *)&saddru, sizeof (saddru)) != 0) {
+		perror("bind");
+		close(sock);
+		return -1;
+	}
+
+	int val = 1;
+	if (ioctl(sock, FIONBIO, &val) < 0) {
+		perror("ioctl");
+		close(sock);
+		return -1;
+	}
+
+	return sock;
+}
+
+static
+int resolve_direction_by_ifname(struct gox_t *gt, char *ifname)
+{
+	int ifindex = if_nametoindex(ifname);
+	if (gt->raw_ifindex == ifindex)
+		return RAW;
+	else if (gt->gtpu_ifindex == ifindex)
+		return GTPU;
+
+	return -1;
+}
+
+static
+void exec_pdr_add_command(struct gox_t *gt, char *cmd, int sock)
+{
+	int direction, map_fd;
+	char ifname[256], id[256], key[256], far_id[256];
+	struct pdi_t pdi;
+	struct pdr_t pdr;
+
+	printf("pdr add: %s\n", cmd);
+
+	if (sscanf(cmd, "%s %s %s %s", ifname, id, key, far_id) < 4) {
+		write(sock, "invalid pdr add command", 24);
+		return;
+	}
+
+	if ((direction = resolve_direction_by_ifname(gt, ifname)) < 0) {
+		write(sock, "invalid interface name", 24);
+		return;
+	}
+
+	pdr.id = atoi(id);
+	pdr.far_id = atoi(far_id);
+	pdr.pdi = pdi;
+
+	if (direction == RAW) {
+		struct in_addr inaddr;
+		if (inet_pton(AF_INET, key, &inaddr) < 1) {
+			write(sock, "invalid ue address", 19);
+			return;
+		}
+		pdr.pdi.ue_addr_ipv4 = inaddr;
+
+		if (bpf_map_update_elem(gt->raw_map_fd, &pdr.pdi.ue_addr_ipv4, &pdr, BPF_NOEXIST)) {
+			write(sock, "can't add raw map entry", 24);
+			return;
+		}
+
+	} else {
+		pdr.pdi.teid = atoi(key);
+		if (bpf_map_update_elem(gt->gtpu_map_fd, &pdr.pdi.teid, &pdr, BPF_NOEXIST)) {
+			write(sock, "can't add gtpu map entry", 25);
+			return;
+		}
+	}
+
+	write(sock, "add pdr entry", 14);
+	return;
+}
+
+static
+void exec_pdr_del_command(struct gox_t *gt, char *cmd, int sock)
+{
+	int direction, map_fd;
+	char ifname[256], key[256];
+
+	printf("pdr del: %s\n", cmd);
+
+	if (sscanf(cmd, "%s %s", ifname, key) < 2) {
+		write(sock, "invalid pdr del command", 24);
+		return;
+	}
+
+	if ((direction = resolve_direction_by_ifname(gt, ifname)) < 0) {
+		write(sock, "invalid interface name", 24);
+		return;
 	}
 
 	if (direction == RAW) {
-		if (bpf_map_update_elem(raw_map_fd, &pdi.ue_addr_ipv4, &pdr, BPF_ANY)) {
-			printf("can't add raw map entry\n");
-			return -1;
+		struct in_addr inaddr;
+		if (inet_pton(AF_INET, key, &inaddr) < 1) {
+			write(sock, "invalid ue address", 19);
+			return;
+		}
+
+		if (bpf_map_delete_elem(gt->raw_map_fd, &inaddr)) {
+			write(sock, "can't delete raw map entry", 27);
+			return;
 		}
 	} else {
-		if (bpf_map_update_elem(gtpu_map_fd, &self_teid, &pdr, BPF_ANY)) {
-			printf("can't add gtpu map entry\n");
-			return -1;
+		int teid = atoi(key);
+		if (bpf_map_delete_elem(gt->gtpu_map_fd, &teid)) {
+			write(sock, "can't delete gtpu map entry", 28);
+			return;
 		}
 	}
 
-	if (bpf_map_update_elem(far_map_fd, &far.id, &far, BPF_ANY)) {
-		printf("can't add far entry\n");
-		return -1;
+	write(sock, "delete pdr entry", 17);
+	return;
+}
+
+static
+void exec_far_del_command(struct gox_t *gt, char *cmd, int sock)
+{
+	char id[256];
+
+	printf("far del: %s\n", cmd);
+
+	if (sscanf(cmd, "%s", id) != 1) {
+		write(sock, "invalid far delete command", 27);
+		return;
+	}
+
+	int key = atoi(id);
+	if (bpf_map_delete_elem(gt->far_map_fd, &key)) {
+		write(sock, "can't delete far entry", 23);
+		return;
 	}	
 
-	return 0;
+	write(sock, "delete far entry", 17);
+	return;
+}
+
+static
+void exec_far_add_command(struct gox_t *gt, char *cmd, int sock)
+{
+
+	char id[256], teid[256], peer_addr[256];
+	struct far_t far = { .encapsulation = false };
+
+	printf("far add: %s\n", cmd);
+
+	if (sscanf(cmd, "%s %s %s", id, teid, peer_addr) == 3) {
+		far.id = atoi(id);
+		far.teid = atoi(teid);
+		struct in_addr inaddr;
+
+		if (inet_pton(AF_INET, peer_addr, &inaddr) < 1) {
+			write(sock, "invalid peer address", 21);
+			return;
+		}
+
+		far.peer_addr_ipv4 = inaddr;
+		far.encapsulation = true;
+	} else if (sscanf(cmd, "%s", id) == 1) {
+		far.id = atoi(id);
+	} else {
+		write(sock, "invalid far add command", 24);
+		return;
+	}
+
+	if (bpf_map_update_elem(gt->far_map_fd, &far.id, &far, BPF_NOEXIST)) {
+		write(sock, "can't add far entry", 20);
+		return;
+	}
+
+	write(sock, "add far entry", 14);
+	return;
+}
+
+static
+void exec_command(struct gox_t *gt, char *cmd, int sock)
+{
+	if (strncmp(cmd, "pdr add", 7) == 0) {
+		cmd += 8;
+		return exec_pdr_add_command(gt, cmd, sock);
+	} else if (strncmp(cmd, "pdr del", 7) == 0) {
+		cmd += 8;
+		return exec_pdr_del_command(gt, cmd, sock);
+	} else if (strncmp(cmd, "far add", 7) == 0) {
+		cmd += 8;
+		return exec_far_add_command(gt, cmd, sock);
+	} else if (strncmp(cmd, "far del", 7) == 0) {
+		cmd += 8;
+		return exec_far_del_command(gt, cmd, sock);
+	}
+
+	write(sock, "invalid command", 16);
+}
+
+static
+void process_gox_control(struct gox_t *gt)
+{
+	char buf[256];
+	char *c;
+	int accept_sock, sock;
+
+	if ((sock = create_unix_domain_socket(GOX_UNIX_DOMAIN)) < 0)
+		return;
+
+	listen(sock, 1);
+
+	while (!interrupted) {
+		memset(buf, 0, sizeof(buf));
+
+		accept_sock = accept(sock, NULL, 0);
+
+		if (read(accept_sock, buf, sizeof(buf)) < 0) {
+			continue;
+		}
+
+		for (c = buf; *c == ' '; c++);
+		exec_command(gt, c, accept_sock);
+
+		close(accept_sock);
+	}
+
+	close(sock);
 }
 
 void usage(void) {
 	printf("Usage:\n");
-	printf("-u|-a: use UPF Mode (-u, default) or RAN Mode (-a)\n");
-	printf("-r <raw iface name>: Name of interface to use (mandatory)\n");
-	printf("-g <gtpu iface name>: Name of interface to use (mandatory)\n");
-	printf("-s <gtpu source address>: Address of GTPU to use (mandatory)\n");
+	printf("-r <raw iface name>: Name of interface to receive raw packet  (mandatory)\n");
+	printf("-g <gtpu iface name>: Name of interface to receive GTPU packet (mandatory)\n");
+	printf("-s <gtpu source address>: Address when sending GTPU packet (mandatory)\n");
 }
 
 
 int main(int argc, char **argv)
 {
-	int prog_fd, gtpu_ifindex, raw_ifindex;
+	struct gox_t gt;
+	int prog_fd, gtpu_ifindex, raw_ifindex, src_map_fd;
 	int option;
-	int mode = UPF;
 	char raw_ifname[IFNAMSIZ] = "";
 	char gtpu_ifname[IFNAMSIZ] = "";
 	char gtpu_addr[16] = "";
@@ -154,17 +355,11 @@ int main(int argc, char **argv)
 		.file		= "src/gox_kern.o",
 	};
 
-	while((option = getopt(argc, argv, "r:g:s:hua")) > 0) {
+	while((option = getopt(argc, argv, "r:g:s:h")) > 0) {
 		switch(option) {
 			case 'h':
 				usage();
-				return -1;
-				break;
-			case 'u':
-				mode = UPF;
-				break;
-			case 'a':
-				mode = RAN;
+				return 0;
 				break;
 			case 's':
 				strncpy(gtpu_addr, optarg, 16);
@@ -176,8 +371,7 @@ int main(int argc, char **argv)
 				strncpy(gtpu_ifname, optarg, IFNAMSIZ - 1);
 				break;
 			default:
-				printf("Unknown option %c\n", option);
-				printf("\n");
+				printf("Unknown option %c\n\n", option);
 				usage();
 				return -1;
 		}
@@ -187,22 +381,12 @@ int main(int argc, char **argv)
 	argc -= optind;
 
 	if (argc > 0) {
-		printf("Too many options!\n");
-		printf("\n");
+		printf("Too many options!\n\n");
 		usage();
 		return -1;
 	}
 
-	if(*raw_ifname == '\0' || *gtpu_ifname == '\0') {
-		printf("Must specify raw interface name and gtpu interface name\n");
-		printf("\n");
-		usage();
-		return -1;
-	}
-
-	if (*gtpu_addr == '\0') {
-		printf("Must specify gtpu source address\n");
-		printf("\n");
+	if(*raw_ifname == '\0' || *gtpu_ifname == '\0' || *gtpu_addr == '\0') {
 		usage();
 		return -1;
 	}
@@ -212,43 +396,36 @@ int main(int argc, char **argv)
 		return -1;
 	}
 
-	if ((gtpu_map_fd = find_map_fd(obj, "gtpu_pdr_entries")) < 0)
+	memset(&gt, 0, sizeof(struct gox_t));
+
+	if ((gt.gtpu_map_fd = find_map_fd(obj, "gtpu_pdr_entries")) < 0)
 		return -1;
-	if ((raw_map_fd = find_map_fd(obj, "raw_pdr_entries")) < 0)
+	if ((gt.raw_map_fd = find_map_fd(obj, "raw_pdr_entries")) < 0)
 		return -1;
-	if ((far_map_fd = find_map_fd(obj, "far_entries")) < 0)
+	if ((gt.far_map_fd = find_map_fd(obj, "far_entries")) < 0)
 		return -1;
 	if ((src_map_fd = find_map_fd(obj, "src_gtpu_addr")) < 0)
 		return -1;
 
-	if ((gtpu_ifindex = set_program_by_title(obj, prog_fd, "input_gtpu_prog", gtpu_ifname)) < 0)
+	if ((gt.gtpu_ifindex = set_xdp_program(obj, prog_fd, "input_gtpu_prog", gtpu_ifname)) < 0)
 		return -1;
-	if ((raw_ifindex = set_program_by_title(obj, prog_fd, "input_raw_prog", raw_ifname)) < 0)
-		return -1;
-
-	if (update_gtpu_addr(gtpu_addr) < 0)
+	if ((gt.raw_ifindex = set_xdp_program(obj, prog_fd, "input_raw_prog", raw_ifname)) < 0)
 		return -1;
 
-	if (mode == UPF) {
-		//upf pdr_id, far_id, self_teid, ue_addr, encapsulation, peer_teid, peer_addr, direction(raw/gtpu)
-		update_forwarding_rule_element(1, 21, 202, 0x100000A, false, 0, 0, 1);
-		update_forwarding_rule_element(2, 22, 202, 0x100000A, true, 101, 0x100A8C0, 0);
-	} else {
-		// ran
-		update_forwarding_rule_element(1, 21, 101, 0x10010AC, false, 0, 0, 1);
-		update_forwarding_rule_element(2, 22, 101, 0x10010AC, true, 202, 0x200A8C0, 0);
-	}
+	if (update_gtpu_addr_map(src_map_fd, gtpu_addr) < 0)
+		return -1;
 
 	signal(SIGINT, sigint_handler);
 	signal(SIGPIPE, sigint_handler);
 
-	while (!interrupted) {
-		sleep(1);
-	}
+	// main process
+	process_gox_control(&gt);
 
 	// detach program
-	bpf_set_link_xdp_fd(gtpu_ifindex, -1, 0);
-	bpf_set_link_xdp_fd(raw_ifindex, -1, 0);
+	bpf_set_link_xdp_fd(gt.gtpu_ifindex, -1, 0);
+	bpf_set_link_xdp_fd(gt.raw_ifindex, -1, 0);
+
+	unlink(GOX_UNIX_DOMAIN);
 
 	return 0;
 }

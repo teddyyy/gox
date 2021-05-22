@@ -56,4 +56,8 @@ dkms.conf
 
 # gox
 gox_user
+goxctl
 *.ll
+
+# vscode
+.vscode
