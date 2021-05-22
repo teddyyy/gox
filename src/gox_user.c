@@ -34,21 +34,27 @@ static void sigint_handler(int signum)
 	interrupted = true;
 }
 
+static void cleanup(struct gox_t *gt)
+{
+	// detach xdp program
+	bpf_set_link_xdp_fd(gt->gtpu_ifindex, -1, 0);
+	bpf_set_link_xdp_fd(gt->raw_ifindex, -1, 0);
+}
 
 static
 int find_map_fd(struct bpf_object *bpf_obj, const char *mapname)
 {
-    struct bpf_map *map;
-    int fd = -1;
+	struct bpf_map *map;
+	int fd = -1;
 
-    map = bpf_object__find_map_by_name(bpf_obj, mapname);
+	map = bpf_object__find_map_by_name(bpf_obj, mapname);
 
-    if (!map)  {
-        printf("Error finding eBPF map: %s\n", mapname);
-        goto out;
-    }
+	if (!map)  {
+		printf("Error finding eBPF map: %s\n", mapname);
+		goto out;
+	}
 
-    fd = bpf_map__fd(map);
+	fd = bpf_map__fd(map);
 
 out:
 	return fd;
@@ -73,7 +79,7 @@ int set_xdp_program(struct bpf_object *bpf_obj, int prog_fd,
 }
 
 static
-int update_gtpu_addr_map(int fd, char *addr)
+int set_source_gtpu_addr(int fd, char *addr)
 {
 	struct in_addr gtpu_addr;
 	int key = 0;
@@ -330,6 +336,7 @@ void process_gox_control(struct gox_t *gt)
 		close(accept_sock);
 	}
 
+	unlink(GOX_UNIX_DOMAIN);
 	close(sock);
 }
 
@@ -412,8 +419,10 @@ int main(int argc, char **argv)
 	if ((gt.raw_ifindex = set_xdp_program(obj, prog_fd, "input_raw_prog", raw_ifname)) < 0)
 		return -1;
 
-	if (update_gtpu_addr_map(src_map_fd, gtpu_addr) < 0)
+	if (set_source_gtpu_addr(src_map_fd, gtpu_addr) < 0) {
+		cleanup(&gt);
 		return -1;
+	}
 
 	signal(SIGINT, sigint_handler);
 	signal(SIGPIPE, sigint_handler);
@@ -421,11 +430,7 @@ int main(int argc, char **argv)
 	// main process
 	process_gox_control(&gt);
 
-	// detach program
-	bpf_set_link_xdp_fd(gt.gtpu_ifindex, -1, 0);
-	bpf_set_link_xdp_fd(gt.raw_ifindex, -1, 0);
-
-	unlink(GOX_UNIX_DOMAIN);
+	cleanup(&gt);
 
 	return 0;
 }
