@@ -8,7 +8,7 @@
 
 
 void usage(void) {
-	printf("Usage: goxctl [object] [command] [params]\n");
+    printf("Usage: goxctl [object] [command] [params]\n");
     printf("\tobject: [ pdr | far ] \n");
     printf("\tcommand: [ add | del ] \n");
     printf("\tparams pdr add: <ifname> <pdr id> <self teid| ue addr> <far id>\n");
@@ -20,7 +20,7 @@ void usage(void) {
 int create_unix_domain_socket(char *domain)
 {
     int sock;
-	struct sockaddr_un saddru = {
+    struct sockaddr_un saddru = {
         .sun_family = AF_UNIX,
     };
 
@@ -66,7 +66,7 @@ int main(int argc, char **argv)
 
     for (i = 1; i < argc; i++) {
         strncpy (buf, cmd, sizeof(buf));
-		snprintf (cmd, sizeof(cmd), "%s %s", buf, argv[i]);
+        snprintf (cmd, sizeof(cmd), "%s %s", buf, argv[i]);
     }
 
     sock = create_unix_domain_socket(GOX_UNIX_DOMAIN);
