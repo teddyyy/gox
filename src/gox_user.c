@@ -101,7 +101,7 @@ int set_source_gtpu_addr(int fd, char *addr)
 static
 int create_unix_domain_socket(char *domain)
 {
-	int sock;
+	int sock, val = 1;
 	struct sockaddr_un saddru = { .sun_family = AF_UNIX };
 
 	strncpy(saddru.sun_path, domain, UNIX_PATH_MAX);
@@ -117,7 +117,6 @@ int create_unix_domain_socket(char *domain)
 		return -1;
 	}
 
-	int val = 1;
 	if (ioctl(sock, FIONBIO, &val) < 0) {
 		perror("ioctl");
 		close(sock);
@@ -140,20 +139,15 @@ int resolve_direction_by_ifname(struct gox_t *gt, char *ifname)
 }
 
 static
-void response_command_message(int sock, char *msg) {
+void response_command_message(int sock, char *msg)
+{
 	if (write(sock, msg, strlen(msg)) < 0)
 		printf("response message can't be returned\n");
 }
 
 static
-u32 str_to_id(char *str) {
-	u32 id = strtoul(str, NULL, 0);
-	if (id == UINT_MAX || id == 0) return 0;
-	return id;
-}
-
-static
-int count_params_number(char *params) {
+int count_params_number(char *params)
+{
 	int count = 1;
 
 	while(*params != '\0'){
@@ -188,8 +182,8 @@ void exec_pdr_add_command(struct gox_t *gt, char *params, int sock)
 		return;
 	}
 
-	u32 ret = str_to_id(far_id);
-	if (ret < 1) {
+	u32 ret = strtoul(far_id, NULL, 0);
+	if (ret == UINT_MAX || ret == 0) {
 		response_command_message(sock, "invalid far id");
 		return;
 	}
@@ -209,8 +203,8 @@ void exec_pdr_add_command(struct gox_t *gt, char *params, int sock)
 			return;
 		}
 	} else {
-		ret = str_to_id(key);
-		if (ret < 1) {
+		ret = strtoul(key, NULL, 0);
+		if (ret == UINT_MAX || ret == 0) {
 			response_command_message(sock, "invalid teid");
 			return;
 		}
@@ -258,7 +252,7 @@ void exec_pdr_del_command(struct gox_t *gt, char *params, int sock)
 			return;
 		}
 	} else {
-		u32 ret = str_to_id(key);
+		u32 ret = strtoul(key, NULL, 0);
 		if (ret < 1) {
 			response_command_message(sock, "invalid teid");
 			return;
@@ -276,10 +270,9 @@ void exec_pdr_del_command(struct gox_t *gt, char *params, int sock)
 static
 void exec_far_del_command(struct gox_t *gt, char *params, int sock)
 {
-	int n;
 	char id[COMMAND_ITEM_BUFSIZE];
 
-	n = count_params_number(params);
+	int n = count_params_number(params);
 	if (n != 1) {
 		response_command_message(sock, "invalid far del command");
 		return;
@@ -288,8 +281,8 @@ void exec_far_del_command(struct gox_t *gt, char *params, int sock)
 	printf("far del: %s\n", params);
 	sscanf(params, "%s", id);
 
-	u32 ret = str_to_id(id);
-	if (ret < 1) {
+	u32 ret = strtoul(id, NULL, 0);
+	if (ret == UINT_MAX || ret == 0) {
 		response_command_message(sock, "invalid far id");
 		return;
 	}
@@ -306,13 +299,12 @@ void exec_far_del_command(struct gox_t *gt, char *params, int sock)
 static
 void exec_far_add_command(struct gox_t *gt, char *params, int sock)
 {
-	int n;
 	char id[COMMAND_ITEM_BUFSIZE];
 	char teid[COMMAND_ITEM_BUFSIZE];
 	char peer_addr[COMMAND_ITEM_BUFSIZE];
 	struct far_t far = { .encapsulation = false };
 
-	n = count_params_number(params);
+	int n = count_params_number(params);
 	if (n != 1 && n != 3) {
 		response_command_message(sock, "invalid far add command");
 		return;
@@ -324,8 +316,8 @@ void exec_far_add_command(struct gox_t *gt, char *params, int sock)
 		sscanf(params, "%s %s %s", id, teid, peer_addr);
 		far.encapsulation = true;
 
-		u32 ret = str_to_id(teid);
-		if (ret < 1) {
+		u32 ret = strtoul(teid, NULL, 0);
+		if (ret == UINT_MAX || ret == 0) {
 			response_command_message(sock, "invalid teid");
 			return;
 		}
@@ -341,8 +333,8 @@ void exec_far_add_command(struct gox_t *gt, char *params, int sock)
 		sscanf(params, "%s", id);
 	}
 
-	u32 ret = str_to_id(id);
-	if (ret < 1) {
+	u32 ret = strtoul(id, NULL, 0);
+	if (ret == UINT_MAX || ret == 0) {
 		response_command_message(sock, "invalid far id");
 		return;
 	}
