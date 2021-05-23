@@ -11,18 +11,16 @@ void usage(void) {
     printf("Usage: goxctl [object] [command] [params]\n");
     printf("\tobject: [ pdr | far ] \n");
     printf("\tcommand: [ add | del ] \n");
-    printf("\tparams pdr add: <ifname> <self teid| ue addr> <far id>\n");
-    printf("\tparams pdr del: <ifname> <self teid| ue addr>\n");
-    printf("\tparams far add: <far id> <teid> <peer addr>\n");
-    printf("\tparams far del: <far id>\n");
+    printf("\tparams pdr add: [ifname] [ self teid | ue addr ] [far id]\n");
+    printf("\tparams pdr del: [ifname] [ self teid | ue addr ]\n");
+    printf("\tparams far add: [far id] <teid> <peer addr>\n");
+    printf("\tparams far del: [far id]\n");
 }
 
 int create_unix_domain_socket(char *domain)
 {
     int sock;
-    struct sockaddr_un saddru = {
-        .sun_family = AF_UNIX,
-    };
+    struct sockaddr_un saddru = { .sun_family = AF_UNIX };
 
     strncpy(saddru.sun_path, domain, UNIX_PATH_MAX);
 
@@ -42,7 +40,9 @@ int create_unix_domain_socket(char *domain)
 int main(int argc, char **argv)
 {
     int sock, i;
-    char cmd[256], buf[256], res[256];
+    char cmd[COMMAND_MSG_BUFSIZE] = "";
+    char buf[COMMAND_MSG_BUFSIZE] = "";
+    char res[COMMAND_MSG_BUFSIZE] = "";
 
     if (argc < 3) {
         usage();
@@ -71,17 +71,17 @@ int main(int argc, char **argv)
 
     sock = create_unix_domain_socket(GOX_UNIX_DOMAIN);
     if (sock < 0) {
-        printf("cannot create unix domain socket\n");
+        printf("can't create unix domain socket\n");
         return -1;
     }
 
     if (write(sock, cmd, sizeof(cmd)) < 0) {
-        printf("cannot write unix domain socket\n");
+        printf("can't write unix domain socket\n");
         return -1;
     }
 
     if (read(sock, res, sizeof(res)) < 0) {
-        printf("cannot read unix domain socket\n");
+        printf("can't read unix domain socket\n");
         return -1;
     }
 

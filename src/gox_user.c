@@ -101,9 +101,7 @@ static
 int create_unix_domain_socket(char *domain)
 {
 	int sock;
-	struct sockaddr_un saddru = {
-		.sun_family = AF_UNIX,
-	};
+	struct sockaddr_un saddru = { .sun_family = AF_UNIX };
 
 	strncpy(saddru.sun_path, domain, UNIX_PATH_MAX);
 
@@ -141,22 +139,30 @@ int resolve_direction_by_ifname(struct gox_t *gt, char *ifname)
 }
 
 static
+void response_command_message(int sock, char *msg) {
+	if (write(sock, msg, strlen(msg)) < 0)
+		printf("response message can't be returned\n");
+}
+
+static
 void exec_pdr_add_command(struct gox_t *gt, char *cmd, int sock)
 {
 	int direction;
-	char ifname[256], key[256], far_id[256];
+	char ifname[COMMAND_ITEM_BUFSIZE];
+	char key[COMMAND_ITEM_BUFSIZE];
+	char far_id[COMMAND_ITEM_BUFSIZE];
 	struct pdi_t pdi = {};
 	struct pdr_t pdr = {};
 
 	printf("pdr add: %s\n", cmd);
 
 	if (sscanf(cmd, "%s %s %s", ifname, key, far_id) < 3) {
-		write(sock, "invalid pdr add command", 24);
+		response_command_message(sock, "invalid pdr add command");
 		return;
 	}
 
 	if ((direction = resolve_direction_by_ifname(gt, ifname)) < 0) {
-		write(sock, "invalid interface name", 24);
+		response_command_message(sock, "invalid interface name");
 		return;
 	}
 
@@ -166,27 +172,25 @@ void exec_pdr_add_command(struct gox_t *gt, char *cmd, int sock)
 	if (direction == RAW) {
 		struct in_addr inaddr;
 		if (inet_pton(AF_INET, key, &inaddr) < 1) {
-			write(sock, "invalid ue address", 19);
+			response_command_message(sock, "invalid ue address");
 			return;
 		}
 		pdr.pdi.ue_addr_ipv4 = inaddr;
-
 		if (bpf_map_update_elem(gt->raw_map_fd, &pdr.pdi.ue_addr_ipv4,
                                         &pdr, BPF_NOEXIST)) {
-			write(sock, "can't add raw map entry", 24);
+			response_command_message(sock, "can't add raw map entry");
 			return;
 		}
-
 	} else {
 		pdr.pdi.teid = atoi(key);
 		if (bpf_map_update_elem(gt->gtpu_map_fd, &pdr.pdi.teid,
                                         &pdr, BPF_NOEXIST)) {
-			write(sock, "can't add gtpu map entry", 25);
+			response_command_message(sock, "can't add gtpu map entry");
 			return;
 		}
 	}
 
-	write(sock, "add pdr entry", 14);
+	response_command_message(sock, "add pdr entry");
 	return;
 }
 
@@ -194,62 +198,62 @@ static
 void exec_pdr_del_command(struct gox_t *gt, char *cmd, int sock)
 {
 	int direction;
-	char ifname[256], key[256];
+	char ifname[COMMAND_ITEM_BUFSIZE], key[COMMAND_ITEM_BUFSIZE];
 
 	printf("pdr del: %s\n", cmd);
 
 	if (sscanf(cmd, "%s %s", ifname, key) < 2) {
-		write(sock, "invalid pdr del command", 24);
+		response_command_message(sock, "invalid pdr del command");
 		return;
 	}
 
 	if ((direction = resolve_direction_by_ifname(gt, ifname)) < 0) {
-		write(sock, "invalid interface name", 24);
+		response_command_message(sock, "invalid interface name");
 		return;
 	}
 
 	if (direction == RAW) {
 		struct in_addr inaddr;
 		if (inet_pton(AF_INET, key, &inaddr) < 1) {
-			write(sock, "invalid ue address", 19);
+			response_command_message(sock, "invalid ue address");
 			return;
 		}
 
 		if (bpf_map_delete_elem(gt->raw_map_fd, &inaddr)) {
-			write(sock, "can't delete raw map entry", 27);
+			response_command_message(sock, "can't delete raw map entry");
 			return;
 		}
 	} else {
 		int teid = atoi(key);
 		if (bpf_map_delete_elem(gt->gtpu_map_fd, &teid)) {
-			write(sock, "can't delete gtpu map entry", 28);
+			response_command_message(sock, "can't delete gtpu map entry");
 			return;
 		}
 	}
 
-	write(sock, "delete pdr entry", 17);
+	response_command_message(sock, "delete pdr entry");
 	return;
 }
 
 static
 void exec_far_del_command(struct gox_t *gt, char *cmd, int sock)
 {
-	char id[256];
+	char id[COMMAND_ITEM_BUFSIZE];
 
 	printf("far del: %s\n", cmd);
 
 	if (sscanf(cmd, "%s", id) != 1) {
-		write(sock, "invalid far delete command", 27);
+		response_command_message(sock, "invalid far delete command");
 		return;
 	}
 
 	int key = atoi(id);
 	if (bpf_map_delete_elem(gt->far_map_fd, &key)) {
-		write(sock, "can't delete far entry", 23);
+		response_command_message(sock, "can't delete far entry");
 		return;
 	}	
 
-	write(sock, "delete far entry", 17);
+	response_command_message(sock, "delete far entry");
 	return;
 }
 
@@ -257,7 +261,9 @@ static
 void exec_far_add_command(struct gox_t *gt, char *cmd, int sock)
 {
 
-	char id[256], teid[256], peer_addr[256];
+	char id[COMMAND_ITEM_BUFSIZE];
+	char teid[COMMAND_ITEM_BUFSIZE];
+	char peer_addr[COMMAND_ITEM_BUFSIZE];
 	struct far_t far = { .encapsulation = false };
 
 	printf("far add: %s\n", cmd);
@@ -268,7 +274,7 @@ void exec_far_add_command(struct gox_t *gt, char *cmd, int sock)
 		struct in_addr inaddr;
 
 		if (inet_pton(AF_INET, peer_addr, &inaddr) < 1) {
-			write(sock, "invalid peer address", 21);
+			response_command_message(sock, "invalid peer address");
 			return;
 		}
 
@@ -277,16 +283,16 @@ void exec_far_add_command(struct gox_t *gt, char *cmd, int sock)
 	} else if (sscanf(cmd, "%s", id) == 1) {
 		far.id = atoi(id);
 	} else {
-		write(sock, "invalid far add command", 24);
+		response_command_message(sock, "invalid far add command");
 		return;
 	}
 
 	if (bpf_map_update_elem(gt->far_map_fd, &far.id, &far, BPF_NOEXIST)) {
-		write(sock, "can't add far entry", 20);
+		response_command_message(sock, "can't add far entry");
 		return;
 	}
 
-	write(sock, "add far entry", 14);
+	response_command_message(sock, "add far entry");
 	return;
 }
 
@@ -307,13 +313,13 @@ void exec_command(struct gox_t *gt, char *cmd, int sock)
 		return exec_far_del_command(gt, cmd, sock);
 	}
 
-	write(sock, "invalid command", 16);
+	response_command_message(sock, "invalid command");
 }
 
 static
 void process_gox_control(struct gox_t *gt)
 {
-	char buf[256];
+	char buf[COMMAND_MSG_BUFSIZE];
 	char *c;
 	int accept_sock, sock;
 

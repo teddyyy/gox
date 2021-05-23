@@ -24,6 +24,8 @@ typedef __s8  s8;
 #define GTP_UDP_PORT     2152
 
 #define GOX_UNIX_DOMAIN  "/var/run/gox"
+#define COMMAND_MSG_BUFSIZE         256
+#define COMMAND_ITEM_BUFSIZE        64
 
 struct gtpuhdr {
     u8 flags;
