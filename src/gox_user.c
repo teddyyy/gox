@@ -145,19 +145,19 @@ void response_command_message(int sock, char *msg) {
 }
 
 static
-int count_command_params(char *cmd) {
+int count_command_params(char *params) {
 	int count = 1;
 
-	while(*cmd != '\0'){
-		if (strncmp(cmd, " ", 1) == 0) count++;
-		cmd++;
+	while(*params != '\0'){
+		if (strncmp(params, " ", 1) == 0) count++;
+		params++;
 	}
 
 	return count;
 }
 
 static
-void exec_pdr_add_command(struct gox_t *gt, char *cmd, int sock)
+void exec_pdr_add_command(struct gox_t *gt, char *params, int sock)
 {
 	int direction, n;
 	char ifname[COMMAND_ITEM_BUFSIZE];
@@ -166,14 +166,14 @@ void exec_pdr_add_command(struct gox_t *gt, char *cmd, int sock)
 	struct pdi_t pdi = {};
 	struct pdr_t pdr = {};
 
-	n = count_command_params(cmd);
+	n = count_command_params(params);
 	if (n != 3) {
 		response_command_message(sock, "invalid pdr add command");
 		return;
 	}
 
-	printf("pdr add: %s\n", cmd);
-	sscanf(cmd, "%s %s %s", ifname, key, far_id);
+	printf("pdr add: %s\n", params);
+	sscanf(params, "%s %s %s", ifname, key, far_id);
 
 	if ((direction = resolve_direction_by_ifname(gt, ifname)) < 0) {
 		response_command_message(sock, "invalid interface name");
@@ -209,19 +209,19 @@ void exec_pdr_add_command(struct gox_t *gt, char *cmd, int sock)
 }
 
 static
-void exec_pdr_del_command(struct gox_t *gt, char *cmd, int sock)
+void exec_pdr_del_command(struct gox_t *gt, char *params, int sock)
 {
 	int direction, n;
 	char ifname[COMMAND_ITEM_BUFSIZE], key[COMMAND_ITEM_BUFSIZE];
 
-	n = count_command_params(cmd);
+	n = count_command_params(params);
 	if (n != 2) {
 		response_command_message(sock, "invalid pdr del command");
 		return;
 	}
 
-	printf("pdr del: %s\n", cmd);
-	sscanf(cmd, "%s %s", ifname, key);
+	printf("pdr del: %s\n", params);
+	sscanf(params, "%s %s", ifname, key);
 
 	if ((direction = resolve_direction_by_ifname(gt, ifname)) < 0) {
 		response_command_message(sock, "invalid interface name");
@@ -252,19 +252,19 @@ void exec_pdr_del_command(struct gox_t *gt, char *cmd, int sock)
 }
 
 static
-void exec_far_del_command(struct gox_t *gt, char *cmd, int sock)
+void exec_far_del_command(struct gox_t *gt, char *params, int sock)
 {
 	int n;
 	char id[COMMAND_ITEM_BUFSIZE];
 
-	n = count_command_params(cmd);
+	n = count_command_params(params);
 	if (n != 1) {
 		response_command_message(sock, "invalid far del command");
 		return;
 	}
 
-	printf("far del: %s\n", cmd);
-	sscanf(cmd, "%s", id);
+	printf("far del: %s\n", params);
+	sscanf(params, "%s", id);
 
 	int key = atoi(id);
 	if (bpf_map_delete_elem(gt->far_map_fd, &key)) {
@@ -277,7 +277,7 @@ void exec_far_del_command(struct gox_t *gt, char *cmd, int sock)
 }
 
 static
-void exec_far_add_command(struct gox_t *gt, char *cmd, int sock)
+void exec_far_add_command(struct gox_t *gt, char *params, int sock)
 {
 	int n;
 	char id[COMMAND_ITEM_BUFSIZE];
@@ -285,16 +285,16 @@ void exec_far_add_command(struct gox_t *gt, char *cmd, int sock)
 	char peer_addr[COMMAND_ITEM_BUFSIZE];
 	struct far_t far = { .encapsulation = false };
 
-	n = count_command_params(cmd);
+	n = count_command_params(params);
 	if (n != 1 && n != 3) {
 		response_command_message(sock, "invalid far add command");
 		return;
 	}
 
-	printf("far add: %s\n", cmd);
+	printf("far add: %s\n", params);
 
 	if (n == 3) {
-		sscanf(cmd, "%s %s %s", id, teid, peer_addr);
+		sscanf(params, "%s %s %s", id, teid, peer_addr);
 		far.id = atoi(id);
 		far.teid = atoi(teid);
 		far.encapsulation = true;
@@ -306,7 +306,7 @@ void exec_far_add_command(struct gox_t *gt, char *cmd, int sock)
 		}
 		far.peer_addr_ipv4 = inaddr;
 	} else if (n == 1) {
-		sscanf(cmd, "%s", id);
+		sscanf(params, "%s", id);
 		far.id = atoi(id);
 	}
 
