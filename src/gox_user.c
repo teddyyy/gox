@@ -50,7 +50,7 @@ int find_map_fd(struct bpf_object *bpf_obj, const char *mapname)
 	map = bpf_object__find_map_by_name(bpf_obj, mapname);
 
 	if (!map)  {
-		printf("Error finding eBPF map: %s\n", mapname);
+		printf("can't find eBPF map: %s\n", mapname);
 		goto out;
 	}
 
@@ -145,7 +145,7 @@ void response_command_message(int sock, char *msg) {
 }
 
 static
-int count_command_params(char *params) {
+int count_params_number(char *params) {
 	int count = 1;
 
 	while(*params != '\0'){
@@ -166,7 +166,7 @@ void exec_pdr_add_command(struct gox_t *gt, char *params, int sock)
 	struct pdi_t pdi = {};
 	struct pdr_t pdr = {};
 
-	n = count_command_params(params);
+	n = count_params_number(params);
 	if (n != 3) {
 		response_command_message(sock, "invalid pdr add command");
 		return;
@@ -214,7 +214,7 @@ void exec_pdr_del_command(struct gox_t *gt, char *params, int sock)
 	int direction, n;
 	char ifname[COMMAND_ITEM_BUFSIZE], key[COMMAND_ITEM_BUFSIZE];
 
-	n = count_command_params(params);
+	n = count_params_number(params);
 	if (n != 2) {
 		response_command_message(sock, "invalid pdr del command");
 		return;
@@ -257,7 +257,7 @@ void exec_far_del_command(struct gox_t *gt, char *params, int sock)
 	int n;
 	char id[COMMAND_ITEM_BUFSIZE];
 
-	n = count_command_params(params);
+	n = count_params_number(params);
 	if (n != 1) {
 		response_command_message(sock, "invalid far del command");
 		return;
@@ -285,7 +285,7 @@ void exec_far_add_command(struct gox_t *gt, char *params, int sock)
 	char peer_addr[COMMAND_ITEM_BUFSIZE];
 	struct far_t far = { .encapsulation = false };
 
-	n = count_command_params(params);
+	n = count_params_number(params);
 	if (n != 1 && n != 3) {
 		response_command_message(sock, "invalid far add command");
 		return;
