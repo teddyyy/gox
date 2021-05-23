@@ -10,6 +10,7 @@
 #include <sys/ioctl.h>
 #include <sys/socket.h>
 #include <linux/un.h>
+#include <limits.h>
 
 #include "common.h"
 
@@ -145,6 +146,13 @@ void response_command_message(int sock, char *msg) {
 }
 
 static
+u32 str_to_id(char *str) {
+	u32 id = strtoul(str, NULL, 0);
+	if (id == UINT_MAX || id == 0) return 0;
+	return id;
+}
+
+static
 int count_params_number(char *params) {
 	int count = 1;
 
@@ -180,7 +188,12 @@ void exec_pdr_add_command(struct gox_t *gt, char *params, int sock)
 		return;
 	}
 
-	pdr.far_id = atoi(far_id);
+	u32 ret = str_to_id(far_id);
+	if (ret < 1) {
+		response_command_message(sock, "invalid far id");
+		return;
+	}
+	pdr.far_id = ret;
 	pdr.pdi = pdi;
 
 	if (direction == RAW) {
@@ -196,7 +209,12 @@ void exec_pdr_add_command(struct gox_t *gt, char *params, int sock)
 			return;
 		}
 	} else {
-		pdr.pdi.teid = atoi(key);
+		ret = str_to_id(key);
+		if (ret < 1) {
+			response_command_message(sock, "invalid teid");
+			return;
+		}
+		pdr.pdi.teid = ret;
 		if (bpf_map_update_elem(gt->gtpu_map_fd, &pdr.pdi.teid,
                                         &pdr, BPF_NOEXIST)) {
 			response_command_message(sock, "can't add gtpu map entry");
@@ -240,8 +258,12 @@ void exec_pdr_del_command(struct gox_t *gt, char *params, int sock)
 			return;
 		}
 	} else {
-		int teid = atoi(key);
-		if (bpf_map_delete_elem(gt->gtpu_map_fd, &teid)) {
+		u32 ret = str_to_id(key);
+		if (ret < 1) {
+			response_command_message(sock, "invalid teid");
+			return;
+		}
+		if (bpf_map_delete_elem(gt->gtpu_map_fd, &ret)) {
 			response_command_message(sock, "can't delete gtpu map entry");
 			return;
 		}
@@ -266,8 +288,13 @@ void exec_far_del_command(struct gox_t *gt, char *params, int sock)
 	printf("far del: %s\n", params);
 	sscanf(params, "%s", id);
 
-	int key = atoi(id);
-	if (bpf_map_delete_elem(gt->far_map_fd, &key)) {
+	u32 ret = str_to_id(id);
+	if (ret < 1) {
+		response_command_message(sock, "invalid far id");
+		return;
+	}
+
+	if (bpf_map_delete_elem(gt->far_map_fd, &ret)) {
 		response_command_message(sock, "can't delete far entry");
 		return;
 	}	
@@ -295,9 +322,14 @@ void exec_far_add_command(struct gox_t *gt, char *params, int sock)
 
 	if (n == 3) {
 		sscanf(params, "%s %s %s", id, teid, peer_addr);
-		far.id = atoi(id);
-		far.teid = atoi(teid);
 		far.encapsulation = true;
+
+		u32 ret = str_to_id(teid);
+		if (ret < 1) {
+			response_command_message(sock, "invalid teid");
+			return;
+		}
+		far.teid = ret;
 
 		struct in_addr inaddr;
 		if (inet_pton(AF_INET, peer_addr, &inaddr) < 1) {
@@ -307,8 +339,14 @@ void exec_far_add_command(struct gox_t *gt, char *params, int sock)
 		far.peer_addr_ipv4 = inaddr;
 	} else if (n == 1) {
 		sscanf(params, "%s", id);
-		far.id = atoi(id);
 	}
+
+	u32 ret = str_to_id(id);
+	if (ret < 1) {
+		response_command_message(sock, "invalid far id");
+		return;
+	}
+	far.id = ret;
 
 	if (bpf_map_update_elem(gt->far_map_fd, &far.id, &far, BPF_NOEXIST)) {
 		response_command_message(sock, "can't add far entry");
