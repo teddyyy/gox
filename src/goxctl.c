@@ -4,8 +4,9 @@
 #include <sys/socket.h>
 #include <linux/un.h>
 
+#include "gox_user.h"
 #include "common.h"
-
+#include "command.h"
 
 void usage(void) {
     printf("Usage: goxctl [object] [command] [params]\n");

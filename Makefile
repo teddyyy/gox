@@ -1,6 +1,6 @@
 CC = clang
 
-objects += src/gox_user.o
+objects += src/gox_user.o src/command.o
 
 libbpf_objects += libbpf/src/staticobjs/bpf.o \
 		  libbpf/src/staticobjs/btf.o \
