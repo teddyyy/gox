@@ -170,6 +170,16 @@ int set_u32_value(char *str, u32 *id)
 }
 
 static
+int set_ipv4_addr(char *addrstr, struct in_addr *inaddr)
+{
+	struct in_addr tmp;
+	if (inet_pton(AF_INET, addrstr, &tmp) < 1) return -1;
+	memcpy(inaddr, &tmp, sizeof(struct in_addr));
+
+	return 0;
+}
+
+static
 void exec_pdr_add_command(struct gox_t *gt, char *params, int sock)
 {
 	int direction, n;
@@ -201,12 +211,10 @@ void exec_pdr_add_command(struct gox_t *gt, char *params, int sock)
 	pdr.pdi = pdi;
 
 	if (direction == RAW) {
-		struct in_addr inaddr;
-		if (inet_pton(AF_INET, key, &inaddr) < 1) {
+		if (set_ipv4_addr(key, &pdr.pdi.ue_addr_ipv4) < 0) {
 			response_command_message(sock, "invalid ue address");
 			return;
 		}
-		pdr.pdi.ue_addr_ipv4 = inaddr;
 		if (bpf_map_update_elem(gt->raw_map_fd, &pdr.pdi.ue_addr_ipv4,
                                         &pdr, BPF_NOEXIST)) {
 			response_command_message(sock, "can't add raw map entry");
@@ -233,6 +241,7 @@ void exec_pdr_del_command(struct gox_t *gt, char *params, int sock)
 {
 	u32 ret;
 	int direction, n;
+	struct in_addr inaddr;
 	char ifname[COMMAND_ITEM_BUFSIZE], key[COMMAND_ITEM_BUFSIZE];
 
 	n = count_params_number(params);
@@ -250,8 +259,7 @@ void exec_pdr_del_command(struct gox_t *gt, char *params, int sock)
 	}
 
 	if (direction == RAW) {
-		struct in_addr inaddr;
-		if (inet_pton(AF_INET, key, &inaddr) < 1) {
+		if (set_ipv4_addr(key, &inaddr) < 0) {
 			response_command_message(sock, "invalid ue address");
 			return;
 		}
@@ -328,12 +336,10 @@ void exec_far_add_command(struct gox_t *gt, char *params, int sock)
 			return;
 		}
 
-		struct in_addr inaddr;
-		if (inet_pton(AF_INET, peer_addr, &inaddr) < 1) {
+		if (set_ipv4_addr(peer_addr, &far.peer_addr_ipv4) < 0) {
 			response_command_message(sock, "invalid peer address");
 			return;
 		}
-		far.peer_addr_ipv4 = inaddr;
 	} else if (n == 1) {
 		sscanf(params, "%s", id);
 	}
