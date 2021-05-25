@@ -389,9 +389,7 @@ void process_gox_control(struct gox_t *gt)
 
 		accept_sock = accept(sock, NULL, 0);
 
-		if (read(accept_sock, buf, sizeof(buf)) < 0) {
-			continue;
-		}
+		if (read(accept_sock, buf, sizeof(buf)) < 0) continue;
 
 		for (c = buf; *c == ' '; c++);
 		exec_command(gt, c, accept_sock);

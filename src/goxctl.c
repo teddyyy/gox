@@ -77,15 +77,19 @@ int main(int argc, char **argv)
 
     if (write(sock, cmd, sizeof(cmd)) < 0) {
         printf("can't write unix domain socket\n");
+        close(sock);
         return -1;
     }
 
     if (read(sock, res, sizeof(res)) < 0) {
         printf("can't read unix domain socket\n");
+        close(sock);
         return -1;
     }
 
     printf("%s\n", res);
+
+    close(sock);
 
     return 0;
 }
