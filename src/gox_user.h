@@ -3,7 +3,7 @@
 
 #include <stdbool.h>
 
-static bool interrupted;
+bool interrupted;
 
 struct gox_ctx_t {
 	int gtpu_map_fd;
