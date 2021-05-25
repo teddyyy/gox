@@ -87,9 +87,10 @@ int set_source_gtpu_addr(int fd, char *addr)
 static
 void usage(void) {
 	printf("Usage:\n");
-	printf("-r <raw iface name>: Name of interface to receive raw packet (mandatory)\n");
-	printf("-g <gtpu iface name>: Name of interface to receive GTPU packet (mandatory)\n");
-	printf("-s <gtpu source address>: Address when sending GTPU packet (mandatory)\n");
+	printf("\t-r <raw iface name>: Name of interface to receive raw packet (mandatory)\n");
+	printf("\t-g <gtpu iface name>: Name of interface to receive GTPU packet (mandatory)\n");
+	printf("\t-s <gtpu source address>: Address when sending GTPU packet (mandatory)\n");
+	printf("\t-p <unix domain socket path>: Path of unix socket to listen (default: /var/run/gox)\n");
 }
 
 int main(int argc, char **argv)
@@ -99,13 +100,14 @@ int main(int argc, char **argv)
 	char raw_ifname[IFNAMSIZ] = "";
 	char gtpu_ifname[IFNAMSIZ] = "";
 	char gtpu_addr[16] = "";
+	char unix_path[UNIX_PATH_SIZE] = "";
 	struct bpf_object *obj;
 	struct bpf_prog_load_attr prog_load_attr = {
 		.prog_type	= BPF_PROG_TYPE_XDP,
 		.file		= "src/gox_kern.o",
 	};
 
-	while((option = getopt(argc, argv, "r:g:s:h")) > 0) {
+	while((option = getopt(argc, argv, "r:g:s:p:h")) > 0) {
 		switch(option) {
 			case 'h':
 				usage();
@@ -119,6 +121,9 @@ int main(int argc, char **argv)
 				break;
 			case 'g':
 				strncpy(gtpu_ifname, optarg, IFNAMSIZ - 1);
+				break;
+			case 'p':
+				strncpy(unix_path, optarg, UNIX_PATH_SIZE - 1);
 				break;
 			default:
 				printf("Unknown option %c\n\n", option);
@@ -166,6 +171,9 @@ int main(int argc, char **argv)
 		cleanup(&gt);
 		return -1;
 	}
+
+	*unix_path != '\0' ? strncpy(gt.unix_path, unix_path, UNIX_PATH_SIZE - 1) : \
+	                     strncpy(gt.unix_path, GOX_UNIX_DOMAIN, UNIX_PATH_SIZE - 1);
 
 	signal(SIGINT, sigint_handler);
 	signal(SIGPIPE, sigint_handler);

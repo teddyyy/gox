@@ -302,7 +302,7 @@ void process_gox_control(struct gox_ctx_t *gt)
 	char *c;
 	int accept_sock, sock;
 
-	if ((sock = create_unix_domain_socket(GOX_UNIX_DOMAIN)) < 0)
+	if ((sock = create_unix_domain_socket(gt->unix_path)) < 0)
 		return;
 
 	listen(sock, 1);
@@ -320,7 +320,7 @@ void process_gox_control(struct gox_ctx_t *gt)
 		close(accept_sock);
 	}
 
-	unlink(GOX_UNIX_DOMAIN);
+	unlink(gt->unix_path);
 	close(sock);
 }
 

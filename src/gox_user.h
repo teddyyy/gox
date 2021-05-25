@@ -3,6 +3,8 @@
 
 #include <stdbool.h>
 
+#define UNIX_PATH_SIZE 64
+
 bool interrupted;
 
 struct gox_ctx_t {
@@ -11,6 +13,7 @@ struct gox_ctx_t {
 	int far_map_fd;
 	int raw_ifindex;
 	int gtpu_ifindex;
+	char unix_path[UNIX_PATH_SIZE];
 };
 
 #endif
