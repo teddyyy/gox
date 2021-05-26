@@ -10,13 +10,16 @@
 #include "command.h"
 
 void usage(void) {
-    printf("Usage: goxctl [object] [command] [params]\n");
-    printf("\tobject: [ pdr | far ] \n");
-    printf("\tcommand: [ add | del ] \n");
-    printf("\tparams pdr add: [ifname] [ self teid | ue addr ] [far id]\n");
-    printf("\tparams pdr del: [ifname] [ self teid | ue addr ]\n");
-    printf("\tparams far add: [far id] <teid> <peer addr>\n");
-    printf("\tparams far del: [far id]\n");
+    printf("Usage:\n");
+    printf("\t-p <unix domain socket path>: Path of unix socket to connect (default: /var/run/gox)\n");
+    printf("\t-c <command>: Commands for manipulating the eBPF map\n");
+    printf("\t\tformat [object] [operation] [params]\n");
+    printf("\t\tobject: [ pdr | far ] \n");
+    printf("\t\toperation: [ add | del ] \n");
+    printf("\t\tparams pdr add: [ifname] [ self teid | ue addr ] [far id]\n");
+    printf("\t\tparams pdr del: [ifname] [ self teid | ue addr ]\n");
+    printf("\t\tparams far add: [far id] <teid> <peer addr>\n");
+    printf("\t\tparams far del: [far id]\n");
 }
 
 int create_unix_domain_socket(char *domain)
