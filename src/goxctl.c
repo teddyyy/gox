@@ -62,7 +62,7 @@ void copy_command_string(char *dst, char *str)
 
 int main(int argc, char **argv)
 {
-    int sock, i, option;
+    int sock, option;
     char unix_path[UNIX_PATH_SIZE] = "";
     char cmd[COMMAND_MSG_BUFSIZE] = "";
     char res[COMMAND_MSG_BUFSIZE] = "";
@@ -83,8 +83,8 @@ int main(int argc, char **argv)
                 printf("Unknown option %c\n\n", option);
                 usage();
                 return -1;
-		}
-	}
+        }
+    }
 
     argv += optind;
     argc -= optind;

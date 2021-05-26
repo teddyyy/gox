@@ -8,12 +8,12 @@
 bool interrupted;
 
 struct gox_ctx_t {
-	int gtpu_map_fd;
-	int raw_map_fd;
-	int far_map_fd;
-	int raw_ifindex;
-	int gtpu_ifindex;
-	char unix_path[UNIX_PATH_SIZE];
+    int gtpu_map_fd;
+    int raw_map_fd;
+    int far_map_fd;
+    int raw_ifindex;
+    int gtpu_ifindex;
+    char unix_path[UNIX_PATH_SIZE];
 };
 
 #endif

@@ -19,7 +19,7 @@ LDFLAGS += -lelf
 all: gox_user gox_kern goxctl
 
 gox_user: libbpf $(objects)
-	clang $(LDFLAGS) -o gox_user $(libbpf_objects) $(objects)
+	clang $(CFLAGS) $(LDFLAGS) -o gox_user $(libbpf_objects) $(objects)
 
 gox_kern: src/gox_kern.o
 	clang \
@@ -30,7 +30,7 @@ gox_kern: src/gox_kern.o
 	llc -march=bpf -filetype=obj src/gox_kern.ll -o src/gox_kern.o
 
 goxctl: src/goxctl.c
-	clang src/goxctl.c -o goxctl
+	clang $(CFLAGS) src/goxctl.c -o goxctl
 
 libbpf:
 	$(MAKE) -C libbpf/src
